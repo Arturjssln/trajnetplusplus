@@ -1,14 +1,10 @@
-
 """Command line tool to train a VAE model."""
 
 import argparse
 
-import pickle
-import torch
-
 class Trainer():
     def __init__(self):
-        print('INIT')
+        raise NotImplementedError
 
 def main(epochs=50):
     parser = argparse.ArgumentParser()
