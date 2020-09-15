@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import trajnetplusplustools
 from trajnetplusplustools import show
 
+
 def random_rotation(xy, goals=None):
     theta = random.random() * 2.0 * math.pi
     ct = math.cos(theta)

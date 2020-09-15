@@ -93,14 +93,14 @@ def add_noise(observation):
     observation += np.random.uniform(-thresh, thresh, observation.shape)
     return observation
 
-def orca_validity(scene, goals, pred_len=12, obs_len=9, iters=15):
+def orca_validity(scene, goals, pred_len=12, obs_len=9, mode='trajnet', iters=15):
     '''
     Check ORCA can reconstruct scene on rounding (To clean in future)
     '''
     scene_xy = trajnetplusplustools.Reader.paths_to_xy(scene)
     for _ in range(iters):
         observation = add_noise(scene_xy[:obs_len].copy())
-        orca_pred = predict_all(observation, goals)
+        orca_pred = predict_all(observation, goals, mode, pred_len)
         if len(orca_pred[0]) != pred_len:
             # print("Length Invalid")
             return True
@@ -114,6 +114,15 @@ def orca_validity(scene, goals, pred_len=12, obs_len=9, iters=15):
                 return True
     return False
 
+def all_ped_present(scene):
+    """ 
+    Consider only those scenes where all pedestrians are present
+    Note: Different from removing incomplete trajectories
+    Useful for generating dataset for fast_parallel code: https://github.com/vita-epfl/trajnetplusplusbaselines/tree/fast_parallel
+    """
+    scene_xy = trajnetplusplustools.Reader.paths_to_xy(scene)
+    return (not np.isnan(scene_xy).any())
+
 def write(rows, path, new_scenes, new_frames):
     """ Writing scenes with categories """
     output_path = path.replace('output_pre', 'output')
@@ -123,6 +132,7 @@ def write(rows, path, new_scenes, new_frames):
 
 def trajectory_type(rows, path, fps, track_id=0, args=None):
     """ Categorization of all scenes """
+
     ## Read
     reader = trajnetplusplustools.Reader(path, scene_type='paths')
     scenes = [s for _, s in reader.scenes()]
@@ -182,6 +192,11 @@ def trajectory_type(rows, path, fps, track_id=0, args=None):
         #     col_count += 1
         #     continue
 
+        # ## Consider only those scenes where all pedestrians are present
+        # # Note: Different from removing incomplete trajectories
+        if args.all_present and (not all_ped_present(scene)):
+            continue
+
         ## Get Tag
         tag, mult_tag, sub_tag = get_type(scene, args)
 
@@ -191,7 +206,7 @@ def trajectory_type(rows, path, fps, track_id=0, args=None):
             if orca_sensitivity:
                 goals = [goal_dict[path[0].pedestrian] for path in scene]
                 # print('Type III')
-                if orca_validity(scene, goals, args.pred_len, args.obs_len):
+                if orca_validity(scene, goals, args.pred_len, args.obs_len, args.mode):
                     col_count += 1
                     continue
 
