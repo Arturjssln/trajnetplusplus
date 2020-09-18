@@ -1,7 +1,0 @@
-{
-    "python.pythonPath": "/Users/arturjesslen/anaconda3/envs/trajnetenv/bin/python",
-    "python.linting.pylintArgs": [
-        "--generated-members=numpy.* ,torch.* ,cv2.* , cv.*"
-        ],
-        "restructuredtext.confPath": ""
-}

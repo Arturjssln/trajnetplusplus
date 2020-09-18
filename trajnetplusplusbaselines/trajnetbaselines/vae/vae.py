@@ -188,7 +188,13 @@ class VAE(torch.nn.Module):
         # in the backprop graph. Therefore: list of hidden states instead of
         # a single higher rank Tensor.
         num_tracks = observed.size(1)
-        hidden_cell_state = (
+        # hidden cell state for encoder 1
+        hidden_cell_state1 = (
+            [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
+            [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
+        )
+        # hidden cell state for encoder 2
+        hidden_cell_state2 = (
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
         )
@@ -197,17 +203,18 @@ class VAE(torch.nn.Module):
         if self.pool.__class__.__name__ in {'NN_LSTM', 'TrajectronPooling', 'SAttention', 'SAttention_fast'}:
             self.pool.reset(num_tracks, device=observed.device)
 
-        # list of predictions
-        normals = []  # predicted normal parameters for both phases
-        positions = []  # true (during obs phase) and predicted positions
 
         if len(observed) == 2:
             positions = [observed[-1]]
 
+        # list of predictions
+        normals = []  # predicted normal parameters for both phases
+        positions = []  # true (during obs phase) and predicted positions
+
         # encoder1
         for obs1, obs2 in zip(observed[:-1], observed[1:]):
             ##LSTM Step
-            hidden_cell_state, normal = self.step(self.encoder1, hidden_cell_state, obs1, obs2, goals, batch_split)
+            hidden_cell_state1, normal = self.step(self.encoder1, hidden_cell_state1, obs1, obs2, goals, batch_split)
 
             # concat predictions
             normals.append(normal)
@@ -219,7 +226,13 @@ class VAE(torch.nn.Module):
         ))
 
         # encoder2
-        ## TODO 
+        for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
+            ##LSTM Step
+            hidden_cell_state2, normal = self.step(self.encoder2, hidden_cell_state2, obs1, obs2, goals, batch_split)
+
+            # concat predictions
+            normals.append(normal)
+            positions.append(obs2 + normal[:, :2])  # no sampling, just mean
 
         # decoder, predictions
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
