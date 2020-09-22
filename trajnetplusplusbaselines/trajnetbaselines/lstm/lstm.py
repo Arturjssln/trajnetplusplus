@@ -112,7 +112,7 @@ class LSTM(torch.nn.Module):
             ## Get relative direction to goals (wrt current position)
             norm_factors = (torch.norm(obs2 - goals, dim=1))
             goal_direction = (obs2 - goals) / norm_factors.unsqueeze(1)
-            goal_direction[norm_factors == 0] = torch.tensor([0., 0.], device=obs1.device)
+            goal_direction[norm_factors == 0] = torch.Tensor([0., 0.], device=obs1.device)
             goal_direction = goal_direction[track_mask]
             goal_emb = self.goal_embedding(goal_direction)
             input_emb = torch.cat([input_emb, goal_emb], dim=1)

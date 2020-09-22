@@ -3,7 +3,11 @@ import itertools
 
 import torch
 
-from ..lstm.modules import InputEmbedding, Hidden2Normal
+from .modules import InputEmbedding, Hidden2Normal
+
+import trajnetplusplustools
+from ..augmentation import inverse_scene
+from .utils import center_scene
 
 NAN = float('nan')
 
@@ -43,11 +47,11 @@ class VAE(torch.nn.Module):
         ## Pooling
         pooling_dim = 0
         if pool is not None and self.pool_to_input:
-            pooling_dim = self.pool.out_dim 
+            pooling_dim = self.pool.out_dim
 
         ## LSTMs
-        self.encoder1 = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
-        self.encoder2 = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
+        self.obs_encoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
+        self.pre_encoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
         self.decoder = torch.nn.LSTMCell(2*(self.embedding_dim + goal_rep_dim + pooling_dim), self.embedding_dim)
 
         # Predict the parameters of a multivariate normal:
@@ -153,7 +157,7 @@ class VAE(torch.nn.Module):
         return hidden_cell_state, normal
 
     def forward(self, observed, goals, batch_split, prediction_truth=None, n_predict=None):
-        """Forecast the entire sequence 
+        """Forecast the entire sequence
         
         Parameters
         ----------
@@ -189,12 +193,12 @@ class VAE(torch.nn.Module):
         # a single higher rank Tensor.
         num_tracks = observed.size(1)
         # hidden cell state for encoder 1
-        hidden_cell_state1 = (
+        hidden_cell_state_obs = (
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
         )
         # hidden cell state for encoder 2
-        hidden_cell_state2 = (
+        hidden_cell_state_pre = (
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
         )
@@ -211,28 +215,28 @@ class VAE(torch.nn.Module):
         normals = []  # predicted normal parameters for both phases
         positions = []  # true (during obs phase) and predicted positions
 
-        # encoder1
+        # Observer encoder
         for obs1, obs2 in zip(observed[:-1], observed[1:]):
-            ##LSTM Step
-            hidden_cell_state1, normal = self.step(self.encoder1, hidden_cell_state1, obs1, obs2, goals, batch_split)
+            # LSTM Step
+            hidden_cell_state_obs, normal = self.step(self.obs_encoder, hidden_cell_state_obs, obs1, obs2, goals, batch_split)
 
             # concat predictions
             normals.append(normal)
             positions.append(obs2 + normal[:, :2])  # no sampling, just mean
-
+    
         # initialize predictions with last position to form velocity
         prediction_truth = list(itertools.chain.from_iterable(
             (observed[-1:], prediction_truth)
         ))
 
-        # encoder2
+        # Prediction encoder
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
-            ##LSTM Step
-            hidden_cell_state2, normal = self.step(self.encoder2, hidden_cell_state2, obs1, obs2, goals, batch_split)
+            # LSTM Step
+            hidden_cell_state_pre, _ = self.step(self.pre_encoder, hidden_cell_state_pre, obs1, obs2, goals, batch_split)
 
-            # concat predictions
-            normals.append(normal)
-            positions.append(obs2 + normal[:, :2])  # no sampling, just mean
+
+        # Concatenation of hidden states
+        hidden_cell_state = hidden_cell_state_obs + hidden_cell_state_pre
 
         # decoder, predictions
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
@@ -260,3 +264,56 @@ class VAE(torch.nn.Module):
         pred_scene = torch.stack(positions, dim=0)
 
         return rel_pred_scene, pred_scene
+
+
+class VAEPredictor(object):
+    def __init__(self, model):
+        self.model = model
+
+    def save(self, state, filename):
+        with open(filename, 'wb') as f:
+            torch.save(self, f)
+
+        # # during development, good for compatibility across API changes:
+        # # Save state for optimizer to continue training in future
+        with open(filename + '.state', 'wb') as f:
+            torch.save(state, f)
+
+    @staticmethod
+    def load(filename):
+        with open(filename, 'rb') as f:
+            return torch.load(f)
+
+
+    def __call__(self, paths, scene_goal, n_predict=12, modes=1, predict_all=True, obs_length=9, start_length=0, args=None):
+        self.model.eval()
+        # self.model.train()
+        with torch.no_grad():
+            xy = trajnetplusplustools.Reader.paths_to_xy(paths)
+            batch_split = [0, xy.shape[1]]
+
+            ## Drop Distant (for real data)
+            # xy, mask = drop_distant(xy, r=15.0)
+            # scene_goal = scene_goal[mask]
+
+            if args.normalize_scene:
+                xy, rotation, center, scene_goal = center_scene(xy, obs_length, goals=scene_goal)
+            
+            xy = torch.Tensor(xy)  #.to(self.device)
+            scene_goal = torch.Tensor(scene_goal) #.to(device)
+            batch_split = torch.Tensor(batch_split).long()
+
+            multimodal_outputs = {}
+            for num_p in range(modes):
+                # _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, xy[obs_length:-1].clone())
+                _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict)
+                output_scenes = output_scenes.numpy()
+                if args.normalize_scene:
+                    output_scenes = inverse_scene(output_scenes, rotation, center)
+                output_primary = output_scenes[-n_predict:, 0]
+                output_neighs = output_scenes[-n_predict:, 1:]
+                ## Dictionary of predictions. Each key corresponds to one mode
+                multimodal_outputs[num_p] = [output_primary, output_neighs]
+
+        ## Return Dictionary of predictions. Each key corresponds to one mode
+        return multimodal_outputs

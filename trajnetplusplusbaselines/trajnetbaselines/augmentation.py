@@ -8,7 +8,6 @@ import trajnetplusplustools
 def rotate_path(path, theta):
     ct = math.cos(theta)
     st = math.sin(theta)
-
     return [trajnetplusplustools.TrackRow(r.frame, r.pedestrian, ct * r.x + st * r.y, -st * r.x + ct * r.y)
             for r in path]
 
@@ -25,15 +24,6 @@ def random_rotation(xy):
 
     r = numpy.array([[ct, st], [-st, ct]])
     return numpy.einsum('ptc,ci->pti', xy, r)
-
-
-def rotate_path(path, theta):
-    ct = math.cos(theta)
-    st = math.sin(theta)
-
-    return [trajnetplusplustools.TrackRow(r.frame, r.pedestrian, ct * r.x + st * r.y, -st * r.x + ct * r.y)
-            for r in path]
-
 
 def theta_rotation(xy, theta):
     # theta = random.random() * 2.0 * math.pi

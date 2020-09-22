@@ -13,16 +13,15 @@ import numpy as np
 
 import trajnetplusplustools
 
-from .. import augmentation
-from ..lstm.loss import PredictionLoss, L2Loss
-from ..lstm.lstm import LSTMPredictor, drop_distant
 from ..lstm.gridbased_pooling import GridBasedPooling
 from ..lstm.non_gridbased_pooling import NN_Pooling, HiddenStateMLPPooling, AttentionMLPPooling, DirectionalMLPPooling
 from ..lstm.non_gridbased_pooling import NN_LSTM, TrajectronPooling, SAttention_fast
 from ..lstm.more_non_gridbased_pooling import NMMP
 
-from .vae import VAE
-from .loss import kld_loss
+from .vae import VAE, VAEPredictor
+from .. import augmentation
+from .loss import PredictionLoss, L2Loss, KLDLoss
+from .utils import drop_distant
 
 from .. import __version__ as VERSION
 
@@ -70,7 +69,7 @@ class Trainer(object):
                 state = {'epoch': epoch, 'state_dict': self.model.state_dict(),
                          'optimizer': self.optimizer.state_dict(),
                          'scheduler': self.lr_scheduler.state_dict()}
-                LSTMPredictor(self.model).save(state, out + '.epoch{}'.format(epoch))
+                VAEPredictor(self.model).save(state, out + '.epoch{}'.format(epoch))
             self.train(train_scenes, train_goals, epoch)
             self.val(val_scenes, val_goals, epoch)
 
@@ -78,8 +77,8 @@ class Trainer(object):
         state = {'epoch': epoch + 1, 'state_dict': self.model.state_dict(),
                  'optimizer': self.optimizer.state_dict(),
                  'scheduler': self.lr_scheduler.state_dict()}
-        LSTMPredictor(self.model).save(state, out + '.epoch{}'.format(epoch + 1))
-        LSTMPredictor(self.model).save(state, out)
+        VAEPredictor(self.model).save(state, out + '.epoch{}'.format(epoch + 1))
+        VAEPredictor(self.model).save(state, out)
 
     def get_lr(self):
         for param_group in self.optimizer.param_groups:
