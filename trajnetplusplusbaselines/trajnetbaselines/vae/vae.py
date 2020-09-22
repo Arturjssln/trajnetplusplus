@@ -52,7 +52,7 @@ class VAE(torch.nn.Module):
         ## LSTMs
         self.obs_encoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
         self.pre_encoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
-        self.decoder = torch.nn.LSTMCell(2*(self.embedding_dim + goal_rep_dim + pooling_dim), self.embedding_dim)
+        self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, 2*self.embedding_dim)
 
         # Predict the parameters of a multivariate normal:
         # mu_vel_x, mu_vel_y, sigma_vel_x, sigma_vel_y, rho
@@ -232,11 +232,9 @@ class VAE(torch.nn.Module):
             # LSTM Step
             hidden_cell_state_pre, _ = self.step(self.pre_encoder, hidden_cell_state_pre, obs1, obs2, goals, batch_split)
 
-
         # Concatenation of hidden states
         hidden_cell_state = tuple([obs + pre for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
 
-        
         # decoder, predictions
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
             if obs1 is None:
