@@ -52,11 +52,12 @@ class VAE(torch.nn.Module):
         ## LSTMs
         self.obs_encoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
         self.pre_encoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
-        self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, 2*self.embedding_dim)
+        self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, 2*self.hidden_dim)
 
         # Predict the parameters of a multivariate normal:
         # mu_vel_x, mu_vel_y, sigma_vel_x, sigma_vel_y, rho
-        self.hidden2normal = Hidden2Normal(self.hidden_dim)
+        self.hidden2normal_encoder = Hidden2Normal(self.hidden_dim)
+        self.hidden2normal_decoder = Hidden2Normal(2*self.hidden_dim)
 
 
     def step(self, lstm, hidden_cell_state, obs1, obs2, goals, batch_split):
@@ -139,9 +140,10 @@ class VAE(torch.nn.Module):
             else:
                 hidden_cell_stacked[0] += pooled
 
-        # LSTM step 
+        # LSTM step
         hidden_cell_stacked = lstm(input_emb, hidden_cell_stacked)
-        normal_masked = self.hidden2normal(hidden_cell_stacked[0])
+        normal_masked = self.hidden2normal_encoder(hidden_cell_stacked[0]) if hidden_cell_state[0][0].size(0) == self.hidden_dim \
+                        else self.hidden2normal_decoder(hidden_cell_stacked[0])
 
         # unmask [Update hidden-states and next velocities of pedestrians]
         normal = torch.full((track_mask.size(0), 5), NAN, device=obs1.device)
@@ -233,7 +235,7 @@ class VAE(torch.nn.Module):
             hidden_cell_state_pre, _ = self.step(self.pre_encoder, hidden_cell_state_pre, obs1, obs2, goals, batch_split)
 
         # Concatenation of hidden states
-        hidden_cell_state = tuple([obs + pre for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
+        hidden_cell_state = tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
 
         # decoder, predictions
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
