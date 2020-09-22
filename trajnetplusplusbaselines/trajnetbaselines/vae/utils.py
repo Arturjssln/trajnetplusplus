@@ -1,3 +1,6 @@
+import math
+import random
+
 import numpy as np
 
 def shift(xy, center):
@@ -12,6 +15,15 @@ def theta_rotation(xy, theta):
 
     r = np.array([[ct, st], [-st, ct]])
     return np.einsum('ptc,ci->pti', xy, r)
+
+def random_rotation(xy, goals=None):
+    theta = random.random() * 2.0 * math.pi
+    ct = math.cos(theta)
+    st = math.sin(theta)
+    r = np.array([[ct, st], [-st, ct]])
+    if goals is None:
+        return np.einsum('ptc,ci->pti', xy, r)
+    return np.einsum('ptc,ci->pti', xy, r), np.einsum('tc,ci->ti', goals, r)
 
 def center_scene(xy, obs_length=9, ped_id=0, goals=None):
     if goals is not None:
@@ -40,3 +52,5 @@ def drop_distant(xy, r=6.0):
     distance_2 = np.sum(np.square(xy - xy[:, 0:1]), axis=2)
     mask = np.nanmin(distance_2, axis=0) < r**2
     return xy[:, mask], mask
+
+    

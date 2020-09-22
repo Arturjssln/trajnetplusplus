@@ -1,7 +1,6 @@
 """Loss used in the VAE model"""
 
 import math
-
 import torch
 
 def KLDLoss(z):

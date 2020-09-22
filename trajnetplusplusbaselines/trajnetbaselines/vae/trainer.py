@@ -13,19 +13,18 @@ import numpy as np
 
 import trajnetplusplustools
 
-from ..lstm.gridbased_pooling import GridBasedPooling
-from ..lstm.non_gridbased_pooling import NN_Pooling, HiddenStateMLPPooling, AttentionMLPPooling, DirectionalMLPPooling
-from ..lstm.non_gridbased_pooling import NN_LSTM, TrajectronPooling, SAttention_fast
-from ..lstm.more_non_gridbased_pooling import NMMP
-
 from .vae import VAE, VAEPredictor
 from .. import augmentation
 from .loss import PredictionLoss, L2Loss, KLDLoss
 from .utils import drop_distant
+from .pooling.gridbased_pooling import GridBasedPooling
+from .pooling.non_gridbased_pooling import NN_Pooling, HiddenStateMLPPooling, AttentionMLPPooling, DirectionalMLPPooling
+from .pooling.non_gridbased_pooling import NN_LSTM, TrajectronPooling, SAttention_fast
+from .pooling.more_non_gridbased_pooling import NMMP
 
 from .. import __version__ as VERSION
 
-from ..lstm.utils import center_scene, random_rotation
+from .utils import center_scene, random_rotation
 
 
 
