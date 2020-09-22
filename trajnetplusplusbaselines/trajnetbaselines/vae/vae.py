@@ -139,7 +139,7 @@ class VAE(torch.nn.Module):
             else:
                 hidden_cell_stacked[0] += pooled
 
-        # LSTM step
+        # LSTM step 
         hidden_cell_stacked = lstm(input_emb, hidden_cell_stacked)
         normal_masked = self.hidden2normal(hidden_cell_stacked[0])
 
@@ -219,7 +219,6 @@ class VAE(torch.nn.Module):
         for obs1, obs2 in zip(observed[:-1], observed[1:]):
             # LSTM Step
             hidden_cell_state_obs, normal = self.step(self.obs_encoder, hidden_cell_state_obs, obs1, obs2, goals, batch_split)
-
             # concat predictions
             normals.append(normal)
             positions.append(obs2 + normal[:, :2])  # no sampling, just mean
@@ -228,7 +227,6 @@ class VAE(torch.nn.Module):
         prediction_truth = list(itertools.chain.from_iterable(
             (observed[-1:], prediction_truth)
         ))
-
         # Prediction encoder
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
             # LSTM Step
@@ -236,8 +234,9 @@ class VAE(torch.nn.Module):
 
 
         # Concatenation of hidden states
-        hidden_cell_state = hidden_cell_state_obs + hidden_cell_state_pre
+        hidden_cell_state = tuple([obs + pre for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
 
+        
         # decoder, predictions
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
             if obs1 is None:
