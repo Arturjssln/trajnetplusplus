@@ -87,7 +87,6 @@ class Trainer(object):
         start_time = time.time()
 
         print('epoch', epoch)
-        self.lr_scheduler.step()
 
         random.shuffle(scenes)
         epoch_loss = 0.0
@@ -158,6 +157,8 @@ class Trainer(object):
                     'loss': round(loss, 3),
                 })
 
+        self.lr_scheduler.step()
+
         self.log.info({
             'type': 'train-epoch',
             'epoch': epoch + 1,
@@ -169,7 +170,7 @@ class Trainer(object):
         eval_start = time.time()
 
         val_loss = 0.0
-        test_loss = 0.0
+        # test_loss = 0.0 TODO: remove
         self.model.train()
 
         ## Initialize batch of scenes
@@ -462,9 +463,9 @@ def main(epochs=50):
     if not os.path.exists('OUTPUT_BLOCK/{}'.format(args.path)):
         os.makedirs('OUTPUT_BLOCK/{}'.format(args.path))
     if args.goals:
-        args.output = 'OUTPUT_BLOCK/{}/lstm_goals_{}_{}.pkl'.format(args.path, args.type, args.output)
+        args.output = 'OUTPUT_BLOCK/{}/vae_goals_{}_{}.pkl'.format(args.path, args.type, args.output)
     else:
-        args.output = 'OUTPUT_BLOCK/{}/lstm_{}_{}.pkl'.format(args.path, args.type, args.output)
+        args.output = 'OUTPUT_BLOCK/{}/vae_{}_{}.pkl'.format(args.path, args.type, args.output)
 
     # configure logging
     from pythonjsonlogger import jsonlogger

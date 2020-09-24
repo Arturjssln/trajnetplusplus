@@ -3,17 +3,31 @@
 import math
 import torch
 
-def KLDLoss(z):
+class KLDLoss(torch.nn.Module):
     """
-    Input:
-    - z: Tensor of shape (????) corresponding to the distribution of latent variable
+    Kullback-Leibler divergence Loss
 
-    Output:
-    - loss:
+    This Loss penalizes only the primary trajectories
     """
-    raise NotImplementedError
-    loss = torch.zeros(z.size())
-    return loss
+    def __init__(self):
+        self.loss = torch.nn.KLDivLoss()
+
+    def forward(self, inputs, targets, batch_split):
+        ## Extract primary pedestrians
+        # [pred_length, num_tracks, 2] --> [pred_length, batch_size, 2]
+        targets = targets.transpose(0, 1)
+        targets = targets[batch_split[:-1]]
+        targets = targets.transpose(0, 1)
+        # [pred_length, num_tracks, 5] --> [pred_length, batch_size, 5]
+        inputs = inputs.transpose(0, 1)
+        inputs = inputs[batch_split[:-1]]
+        inputs = inputs.transpose(0, 1)
+
+        # Only xy components of the multivariate normal distribution
+        return self.loss(inputs[:, :, :2], targets)
+
+
+    
 
 class PredictionLoss(torch.nn.Module):
     """2D Gaussian with a flat background.
