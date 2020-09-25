@@ -56,8 +56,8 @@ class VAE(torch.nn.Module):
         self.pre_encoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
 
         ## cVAE
-        self.vae_encoder = VAEEncoder(2*self.hidden_dim, self.latent_dim)
-        self.vae_decoder = VAEDecoder(self.latent_dim, self.embedding_dim + goal_rep_dim + pooling_dim)
+        self.vae_encoder = VAEEncoder(2*self.hidden_dim, 2*self.latent_dim)
+        self.vae_decoder = VAEDecoder(2*self.latent_dim, self.hidden_dim)
 
         ## LSTM decoder
         self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, 2*self.hidden_dim)
@@ -342,7 +342,7 @@ class VAEEncoder(torch.nn.Module):
         self.input_dims = input_dims
         self.latent_dim = latent_dim
         self.conv = torch.nn.Sequential(collections.OrderedDict([
-          ('conv1', torch.nn.Conv2D(in_channels=5, out_channels=32, stride=2)),
+          ('conv1', torch.nn.Conv2d(in_channels=5, out_channels=32, stride=2)),
           ('conv2', torch.nn.Conv2d(in_channels=5, out_channels=64, stride=2)),
           ('conv3', torch.nn.Conv2d(in_channels=5, out_channels=128)),
         ]))
