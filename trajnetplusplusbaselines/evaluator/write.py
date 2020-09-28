@@ -87,6 +87,11 @@ def main(args=None):
                 predictor = trajnetbaselines.lstm.LSTMPredictor.load(model)
                 device = torch.device('cpu')
                 predictor.model.to(device)
+            elif 'vae' in model_name:
+                print("VAE")
+                predictor = trajnetbaselines.vae.VAEPredictor.load(model)
+                device = torch.device('cpu')
+                predictor.model.to(device)
             else:
                 print("Model Architecture not recognized")
                 raise ValueError
