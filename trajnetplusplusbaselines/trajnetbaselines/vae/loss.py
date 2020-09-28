@@ -10,7 +10,8 @@ class KLDLoss(torch.nn.Module):
     This Loss penalizes only the primary trajectories
     """
     def __init__(self):
-        self.loss = torch.nn.KLDivLoss()
+        super(KLDLoss, self).__init__()
+        self.loss = torch.nn.KLDivLoss(reduction='batchmean', log_target=False)
 
     def forward(self, inputs, targets, batch_split):
         ## Extract primary pedestrians
