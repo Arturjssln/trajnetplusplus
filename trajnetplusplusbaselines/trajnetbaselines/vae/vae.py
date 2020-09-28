@@ -202,12 +202,12 @@ class VAE(torch.nn.Module):
         # in the backprop graph. Therefore: list of hidden states instead of
         # a single higher rank Tensor.
         num_tracks = observed.size(1)
-        # hidden cell state for encoder 1
+        # hidden cell state for observer encoder 
         hidden_cell_state_obs = (
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
         )
-        # hidden cell state for encoder 2
+        # hidden cell state for prediction encoder
         hidden_cell_state_pre = (
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
@@ -246,12 +246,15 @@ class VAE(torch.nn.Module):
         hidden_cell_state = tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
 
         ## VAE encoder
-        # TODO: implementes encoder here
-        #z_mu, z_var = self.vae_encoder() 
-        # Keep z_mu and z_var  as it is needed to compute KLD loss
+        z_mu, z_var_log = self.vae_encoder(hidden_cell_state) # TODO: not sure about the input
+
+        ## Sampling using "reparametrization trick"
+        # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
+        epsilon = torch.empty(size=(z_mu.size)).normal_(mean=0, std=1)
+        z_val = z_mu + torch.exp(z_var_log/2) * epsilon #TODO: not sure about "/2"
 
         ## VAE decoder
-        # TODO: implementes decoder here
+        x_reconstr = self.vae_decoder(z_val)
 
         ## decoder, predictions
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
@@ -278,7 +281,7 @@ class VAE(torch.nn.Module):
         rel_pred_scene = torch.stack(normals, dim=0)
         pred_scene = torch.stack(positions, dim=0)
 
-        return rel_pred_scene, pred_scene
+        return rel_pred_scene, pred_scene, z_mu, z_var_log
 
 
 class VAEPredictor(object):
@@ -352,10 +355,12 @@ class VAEEncoder(torch.nn.Module):
     def forward(self, inputs):
         inputs = torch.reshape(inputs, shape=(-1, self.input_dims[0], self.input_dims[1], 1))
         inputs = self.conv(inputs)
-        inputs = torch.reshape(inputs, -1)
+        inputs = torch.reshape(inputs, shape=(-1, 128))
         z_mu = self.fc_mu(inputs)
         z_var = self.fc_var(inputs)
-        return [z_mu, z_var]
+        # Logarithm of the variance, 
+        # this allows for smoother representations for the latent space.
+        return [z_mu, np.log(z_var)]
 
 
 class VAEDecoder(torch.nn.Module):
