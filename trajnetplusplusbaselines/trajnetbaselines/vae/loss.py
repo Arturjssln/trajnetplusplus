@@ -11,20 +11,27 @@ class KLDLoss(torch.nn.Module):
     """
     def __init__(self):
         super(KLDLoss, self).__init__()
-        self.loss = torch.nn.KLDivLoss(reduction='batchmean', log_target=False)
+        #self.loss = torch.nn.KLDivLoss(reduction='batchmean', log_target=False) # TODO: remove 
 
-    def forward(self, inputs, targets, batch_split):
-        ## Extract primary pedestrians
-        # [pred_length, num_tracks, 5] --> [pred_length, batch_size, 5]
-        targets = targets.transpose(0, 1)
-        targets = targets[batch_split[:-1]]
-        targets = targets.transpose(0, 1)
-        inputs = inputs.transpose(0, 1)
-        inputs = inputs[batch_split[:-1]]
-        inputs = inputs.transpose(0, 1)
+    def forward(self, inputs, targets = None):
+        """
+        Forward path
 
-        return self.loss(inputs, targets)
+        Parameters:
+        -----------
+        inputs : Tensor [batch_size, 2*latent_dim]
+            Tensor containing multivariate distribution mean and logarithmic variance
+        targets : Tensor [batch_size, 2*latent_dim] TODO: Not implemented yet.
+            Tensor containing target multivariate distribution mean and logarithmic variance
+            Default: standard normal distribution (zero mean and unit variance)
 
+        """
+        if targets is None:
+            z_mu, z_var_log = torch.split(inputs, split_size_or_sections=inputs.size(1)//2, dim=1)
+            latent_loss = -0.5 * torch.sum(1.0 + z_var_log - torch.square(z_mu) - torch.exp(z_var_log), dim=1)
+            return torch.mean(latent_loss)
+        else:
+            raise NotImplementedError
 
     
 
