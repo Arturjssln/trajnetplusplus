@@ -1,5 +1,6 @@
 """ VAE class definition """
 import itertools
+import collections
 
 import torch
 
@@ -12,7 +13,7 @@ from .utils import center_scene
 NAN = float('nan')
 
 class VAE(torch.nn.Module):
-    def __init__(self, embedding_dim=64, hidden_dim=128, pool=None, pool_to_input=True, goal_dim=None, goal_flag=False):
+    def __init__(self, embedding_dim=64, hidden_dim=128, latent_dim=128, pool=None, pool_to_input=True, goal_dim=None, goal_flag=False):
         """ Initialize the VAE forecasting model
 
         Attributes
@@ -31,6 +32,7 @@ class VAE(torch.nn.Module):
 
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
+        self.latent_dim = latent_dim
         self.pool = pool
         self.pool_to_input = pool_to_input
 
@@ -49,9 +51,15 @@ class VAE(torch.nn.Module):
         if pool is not None and self.pool_to_input:
             pooling_dim = self.pool.out_dim
 
-        ## LSTMs
+        ## LSTM encoders
         self.obs_encoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
         self.pre_encoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
+
+        ## cVAE
+        self.vae_encoder = VAEEncoder(2*self.hidden_dim, 2*self.latent_dim)
+        self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
+
+        ## LSTM decoder
         self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, 2*self.hidden_dim)
 
         # Predict the parameters of a multivariate normal:
@@ -194,12 +202,12 @@ class VAE(torch.nn.Module):
         # in the backprop graph. Therefore: list of hidden states instead of
         # a single higher rank Tensor.
         num_tracks = observed.size(1)
-        # hidden cell state for encoder 1
+        # hidden cell state for observer encoder 
         hidden_cell_state_obs = (
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
         )
-        # hidden cell state for encoder 2
+        # hidden cell state for prediction encoder
         hidden_cell_state_pre = (
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
@@ -217,7 +225,7 @@ class VAE(torch.nn.Module):
         normals = []  # predicted normal parameters for both phases
         positions = []  # true (during obs phase) and predicted positions
 
-        # Observer encoder
+        ## Observer encoder
         for obs1, obs2 in zip(observed[:-1], observed[1:]):
             # LSTM Step
             hidden_cell_state_obs, normal = self.step(self.obs_encoder, hidden_cell_state_obs, obs1, obs2, goals, batch_split)
@@ -229,7 +237,7 @@ class VAE(torch.nn.Module):
         prediction_truth = list(itertools.chain.from_iterable(
             (observed[-1:], prediction_truth)
         ))
-        # Prediction encoder
+        ## Prediction encoder
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
             # LSTM Step
             hidden_cell_state_pre, _ = self.step(self.pre_encoder, hidden_cell_state_pre, obs1, obs2, goals, batch_split)
@@ -237,7 +245,20 @@ class VAE(torch.nn.Module):
         # Concatenation of hidden states
         hidden_cell_state = tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
 
-        # decoder, predictions
+        ## VAE encoder, latent distribution
+        hidden_state = hidden_cell_state[0]
+        z_mu, z_var_log = self.vae_encoder(hidden_state)
+        z_distr = torch.cat((z_mu, z_var_log), dim=1)
+
+        ## Sampling using "reparametrization trick"
+        # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
+        epsilon = torch.empty(size=(z_mu.size)).normal_(mean=0, std=1)
+        z_val = z_mu + torch.exp(z_var_log/2) * epsilon
+
+        ## VAE decoder
+        x_reconstr = self.vae_decoder(z_val)
+
+        ## decoder, predictions
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
             if obs1 is None:
                 obs1 = positions[-2].detach()  # DETACH!!!
@@ -262,7 +283,7 @@ class VAE(torch.nn.Module):
         rel_pred_scene = torch.stack(normals, dim=0)
         pred_scene = torch.stack(positions, dim=0)
 
-        return rel_pred_scene, pred_scene
+        return rel_pred_scene, pred_scene, z_distr
 
 
 class VAEPredictor(object):
@@ -316,3 +337,48 @@ class VAEPredictor(object):
 
         ## Return Dictionary of predictions. Each key corresponds to one mode
         return multimodal_outputs
+
+
+
+
+class VAEEncoder(torch.nn.Module):
+
+    def __init__(self, input_dims, output_dims):
+        self.input_dims = input_dims
+        self.latent_dims = output_dims // 2
+        self.conv = torch.nn.Sequential(collections.OrderedDict([
+          ('conv1', torch.nn.Conv2d(in_channels=5, out_channels=32, stride=2)),
+          ('conv2', torch.nn.Conv2d(in_channels=5, out_channels=64, stride=2)),
+          ('conv3', torch.nn.Conv2d(in_channels=5, out_channels=128)),
+        ]))
+        self.fc_mu = torch.nn.Linear(in_features=128, out_features=self.latent_dims)
+        self.fc_var = torch.nn.Linear(in_features=128, out_features=self.latent_dims)
+
+    def forward(self, inputs):
+        inputs = torch.reshape(inputs, shape=(-1, self.input_dims[0], self.input_dims[1], 1))
+        inputs = self.conv(inputs)
+        inputs = torch.reshape(inputs, shape=(-1, 128))
+        z_mu = self.fc_mu(inputs)
+        z_var = self.fc_var(inputs)
+        # Logarithm of the variance, 
+        # this allows for smoother representations for the latent space.
+        return z_mu, np.log(z_var)
+
+
+class VAEDecoder(torch.nn.Module):
+
+    def __init__(self, latent_dim, output_dim):
+        self.latent_dim = latent_dim
+        self.output_dim = output_dim
+        self.conv = torch.nn.Sequential(collections.OrderedDict([
+          ('conv1', torch.nn.ConvTranspose2d(in_channels=4, out_channels=128)),
+          ('conv2', torch.nn.ConvTranspose2d(in_channels=5, out_channels=64)),
+          ('conv3', torch.nn.ConvTranspose2d(in_channels=5, out_channels=32, stride=2)),
+          ('conv4', torch.nn.ConvTranspose2d(in_channels=5, out_channels=1, stride=2)),
+          ('activ', torch.nn.Sigmoid())
+        ]))
+
+    def forward(self, inputs):
+        inputs = torch.reshape(inputs, shape=(-1, 1, 1, self.latent_dim))
+        inputs = self.conv(inputs)
+        return torch.reshape(inputs, -1)
