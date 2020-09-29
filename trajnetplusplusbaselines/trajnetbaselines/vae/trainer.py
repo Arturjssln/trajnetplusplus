@@ -260,15 +260,16 @@ class Trainer(object):
         prediction_truth = batch_scene[self.obs_length:self.seq_length-1].clone()
         targets = batch_scene[self.obs_length:self.seq_length] - batch_scene[self.obs_length-1:self.seq_length-1]
 
-        rel_outputs, outputs, z_mu, z_var_log = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
+        rel_outputs, outputs, z_distribution = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
 
         ## Loss wrt primary tracks of each scene only
         # Reconstruction loss
         reconstr_loss = self.criterion(rel_outputs[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier
         
         # KLD loss
-        z_distribution = torch.cat((z_mu, z_var_log), dim=1)
-        kdl_loss = self.kld_loss(z_distribution, z_distribution) # TODO: what is the targets????
+        # Normal distribution with mu=0,std = I 
+        normal = torch.Tensor([0, 0, 1, 1, 1])
+        kdl_loss = self.kld_loss(z_distribution, normal) # TODO: what is the targets????
 
         self.optimizer.zero_grad()
         loss.backward()

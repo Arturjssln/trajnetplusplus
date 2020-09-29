@@ -232,6 +232,7 @@ class VAE(torch.nn.Module):
             # concat predictions
             normals.append(normal)
             positions.append(obs2 + normal[:, :2])  # no sampling, just mean
+            # TODO: answer why we add normal component ? We are still in the observation phase, no ?
     
         # initialize predictions with last position to form velocity
         prediction_truth = list(itertools.chain.from_iterable(
@@ -245,16 +246,17 @@ class VAE(torch.nn.Module):
         # Concatenation of hidden states
         hidden_cell_state = tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
 
-        ## VAE encoder
+        ## VAE encoder, latent distribution
         z_mu, z_var_log = self.vae_encoder(hidden_cell_state) # TODO: not sure about the input
 
         ## Sampling using "reparametrization trick"
         # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
         epsilon = torch.empty(size=(z_mu.size)).normal_(mean=0, std=1)
-        z_val = z_mu + torch.exp(z_var_log/2) * epsilon #TODO: not sure about "/2"
+        z_val = z_mu + torch.exp(z_var_log/2) * epsilon # TODO: not sure about "/2"
+        z_distr = torch.cat((z_mu, z_var_log), dim=1)
 
         ## VAE decoder
-        x_reconstr = self.vae_decoder(z_val)
+        x_reconstr = self.vae_decoder(z_val) # TODO: input = 2*latent_dim or just latent_dim ?
 
         ## decoder, predictions
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
@@ -281,7 +283,7 @@ class VAE(torch.nn.Module):
         rel_pred_scene = torch.stack(normals, dim=0)
         pred_scene = torch.stack(positions, dim=0)
 
-        return rel_pred_scene, pred_scene, z_mu, z_var_log
+        return rel_pred_scene, pred_scene, z_distr
 
 
 class VAEPredictor(object):
