@@ -57,7 +57,7 @@ class VAE(torch.nn.Module):
 
         ## cVAE
         self.vae_encoder = VAEEncoder(2*self.hidden_dim, 2*self.latent_dim)
-        self.vae_decoder = VAEDecoder(2*self.latent_dim, self.hidden_dim)
+        self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
 
         ## LSTM decoder
         self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, 2*self.hidden_dim)
@@ -232,7 +232,6 @@ class VAE(torch.nn.Module):
             # concat predictions
             normals.append(normal)
             positions.append(obs2 + normal[:, :2])  # no sampling, just mean
-            # TODO: answer why we add normal component ? We are still in the observation phase, no ?
     
         # initialize predictions with last position to form velocity
         prediction_truth = list(itertools.chain.from_iterable(
@@ -247,16 +246,17 @@ class VAE(torch.nn.Module):
         hidden_cell_state = tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
 
         ## VAE encoder, latent distribution
-        z_mu, z_var_log = self.vae_encoder(hidden_cell_state) # TODO: not sure about the input
+        hidden_state = hidden_cell_state[0]
+        z_mu, z_var_log = self.vae_encoder(hidden_state)
+        z_distr = torch.cat((z_mu, z_var_log), dim=1)
 
         ## Sampling using "reparametrization trick"
         # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
         epsilon = torch.empty(size=(z_mu.size)).normal_(mean=0, std=1)
-        z_val = z_mu + torch.exp(z_var_log/2) * epsilon # TODO: not sure about "/2"
-        z_distr = torch.cat((z_mu, z_var_log), dim=1)
+        z_val = z_mu + torch.exp(z_var_log/2) * epsilon
 
         ## VAE decoder
-        x_reconstr = self.vae_decoder(z_val) # TODO: input = 2*latent_dim or just latent_dim ?
+        x_reconstr = self.vae_decoder(z_val)
 
         ## decoder, predictions
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
@@ -343,16 +343,16 @@ class VAEPredictor(object):
 
 class VAEEncoder(torch.nn.Module):
 
-    def __init__(self, input_dims, latent_dim):
+    def __init__(self, input_dims, output_dims):
         self.input_dims = input_dims
-        self.latent_dim = latent_dim
+        self.latent_dims = output_dims // 2
         self.conv = torch.nn.Sequential(collections.OrderedDict([
           ('conv1', torch.nn.Conv2d(in_channels=5, out_channels=32, stride=2)),
           ('conv2', torch.nn.Conv2d(in_channels=5, out_channels=64, stride=2)),
           ('conv3', torch.nn.Conv2d(in_channels=5, out_channels=128)),
         ]))
-        self.fc_mu = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
-        self.fc_var = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
+        self.fc_mu = torch.nn.Linear(in_features=128, out_features=self.latent_dims)
+        self.fc_var = torch.nn.Linear(in_features=128, out_features=self.latent_dims)
 
     def forward(self, inputs):
         inputs = torch.reshape(inputs, shape=(-1, self.input_dims[0], self.input_dims[1], 1))
@@ -362,7 +362,7 @@ class VAEEncoder(torch.nn.Module):
         z_var = self.fc_var(inputs)
         # Logarithm of the variance, 
         # this allows for smoother representations for the latent space.
-        return [z_mu, np.log(z_var)]
+        return z_mu, np.log(z_var)
 
 
 class VAEDecoder(torch.nn.Module):
