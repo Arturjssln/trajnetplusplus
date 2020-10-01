@@ -13,6 +13,8 @@ from .utils import center_scene
 NAN = float('nan')
 
 class VAE(torch.nn.Module):
+    """VAE forecasting model
+    """
     def __init__(self, embedding_dim=64, hidden_dim=128, latent_dim=128, pool=None, pool_to_input=True, goal_dim=None, goal_flag=False):
         """ Initialize the VAE forecasting model
 
@@ -349,8 +351,8 @@ class VAEPredictor(object):
 
 
 class VAEEncoder(torch.nn.Module):
-    """
-    TODO: 
+    """C-VAE Encoder
+
     """
     def __init__(self, input_dims, output_dim):
         super(VAEEncoder, self).__init__()
@@ -378,8 +380,8 @@ class VAEEncoder(torch.nn.Module):
 
 
 class VAEDecoder(torch.nn.Module):
-    """
-    TODO:
+    """C-VAE Decoder
+
     """
     def __init__(self, input_dim, output_dim):
         super(VAEDecoder, self).__init__()
