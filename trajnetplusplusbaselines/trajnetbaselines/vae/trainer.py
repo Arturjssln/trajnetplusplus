@@ -267,10 +267,10 @@ class Trainer(object):
         reconstr_loss = self.criterion(rel_outputs[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier
         
         # KLD loss
-        # Normal distribution with mu=0,std = I 
-        normal = torch.Tensor([0, 0, 1, 1, 1])
-        kdl_loss = self.kld_loss(z_distribution, normal) # TODO: what is the targets????
+        kdl_loss = self.kld_loss(inputs=z_distribution) * self.batch_size * self.loss_multiplier
 
+        ## Total loss is the sum of the reconstruction loss and the kld loss
+        loss = kdl_loss + reconstr_loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -310,9 +310,11 @@ class Trainer(object):
 
         with torch.no_grad():
             ## groundtruth of neighbours provided (Better validation curve to monitor model)
-            rel_outputs, _ = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
-            loss = self.criterion(rel_outputs[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier
-
+            rel_outputs, _, z_distribution = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
+            reconstr_loss = self.criterion(rel_outputs[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier
+            kdl_loss = self.kld_loss(inputs=z_distribution) * self.batch_size * self.loss_multiplier
+            loss = reconstr_loss + kdl_loss
+            
             ## groundtruth of neighbours not provided TODO: remove
             #rel_outputs_test, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
             #loss_test = self.criterion(rel_outputs_test[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier
