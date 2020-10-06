@@ -4,14 +4,11 @@ import math
 import torch
 
 class KLDLoss(torch.nn.Module):
-    """
-    Kullback-Leibler divergence Loss
+    """Kullback-Leibler divergence Loss
 
-    This Loss penalizes only the primary trajectories
     """
     def __init__(self):
         super(KLDLoss, self).__init__()
-        #self.loss = torch.nn.KLDivLoss(reduction='batchmean', log_target=False) # TODO: remove 
 
     def forward(self, inputs, targets = None):
         """
@@ -27,8 +24,8 @@ class KLDLoss(torch.nn.Module):
 
         """
         if targets is None:
-            z_mu, z_var_log = torch.split(inputs, split_size_or_sections=inputs.size(1)//2, dim=1)
-            latent_loss = -0.5 * torch.sum(1.0 + z_var_log - torch.square(z_mu) - torch.exp(z_var_log), dim=1)
+            z_mu, z_log_var = torch.split(inputs, split_size_or_sections=inputs.size(1)//2, dim=1)
+            latent_loss = -0.5 * torch.sum(1.0 + z_log_var - torch.square(z_mu) - torch.exp(z_log_var), dim=1)
             return torch.mean(latent_loss)
         else:
             raise NotImplementedError

@@ -31,7 +31,8 @@ from .utils import center_scene, random_rotation
 class Trainer(object):
     def __init__(self, model=None, criterion='L2', optimizer=None, lr_scheduler=None,
                  device=None, batch_size=32, obs_length=9, pred_length=12, augment=False,
-                 normalize_scene=False, save_every=1, start_length=0, obs_dropout=False):
+                 normalize_scene=False, save_every=1, start_length=0, obs_dropout=False,
+                 alpha_kld=1, num_modes=1):
         self.model = model if model is not None else VAE()
         if criterion == 'L2':
             self.criterion = L2Loss()
@@ -39,7 +40,10 @@ class Trainer(object):
         else:
             self.criterion = PredictionLoss()
             self.loss_multiplier = 1
+        
         self.kld_loss = KLDLoss()
+        self.alpha_kld = alpha_kld
+        self.num_modes = num_modes
         
         self.optimizer = optimizer if optimizer is not None else torch.optim.SGD(
             self.model.parameters(), lr=3e-4, momentum=0.9)
@@ -246,6 +250,7 @@ class Trainer(object):
             Tensor defining the split of the batch.
             Required to identify the tracks of to the same scene
 
+
         Returns
         -------
         loss : scalar
@@ -260,17 +265,18 @@ class Trainer(object):
         prediction_truth = batch_scene[self.obs_length:self.seq_length-1].clone()
         targets = batch_scene[self.obs_length:self.seq_length] - batch_scene[self.obs_length-1:self.seq_length-1]
 
-        rel_outputs, outputs, z_distribution = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
+        rel_outputs, _, z_distribution = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
 
         ## Loss wrt primary tracks of each scene only
         # Reconstruction loss
-        reconstr_loss = self.criterion(rel_outputs[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier
-        
+        reconstr_loss = 0
+        for rel_outputs_mode in rel_outputs:
+            reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
         # KLD loss
-        kdl_loss = self.kld_loss(inputs=z_distribution) * self.batch_size * self.loss_multiplier
-
+        kdl_loss = self.kld_loss(inputs=z_distribution) * self.batch_size
+        
         ## Total loss is the sum of the reconstruction loss and the kld loss
-        loss = kdl_loss + reconstr_loss
+        loss = kdl_loss + self.alpha_kld * reconstr_loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -311,9 +317,11 @@ class Trainer(object):
         with torch.no_grad():
             ## groundtruth of neighbours provided (Better validation curve to monitor model)
             rel_outputs, _, z_distribution = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
-            reconstr_loss = self.criterion(rel_outputs[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier
+            reconstr_loss = 0
+            for rel_outputs_mode in rel_outputs:
+                reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
             kdl_loss = self.kld_loss(inputs=z_distribution) * self.batch_size * self.loss_multiplier
-            loss = reconstr_loss + kdl_loss
+            loss = reconstr_loss + self.alpha_kld * kdl_loss
             
             ## groundtruth of neighbours not provided TODO: remove
             #rel_outputs_test, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
@@ -461,7 +469,10 @@ def main(epochs=50):
                                  help='obs length dropout (regularization)')
     hyperparameters.add_argument('--start_length', default=0, type=int,
                                  help='start length during obs dropout')
-
+    hyperparameters.add_argument('--alpha_kld', default=1, type=float,
+                                 help='multiplier coefficient for kld loss')
+    hyperparameters.add_argument('--num_modes', default=1, type=int,
+                                 help='Number of modes for reconstruction loss')                       
     args = parser.parse_args()
 
     ## Fixed set of scenes if sampling
@@ -548,7 +559,8 @@ def main(epochs=50):
                  embedding_dim=args.coordinate_embedding_dim,
                  hidden_dim=args.hidden_dim,
                  goal_flag=args.goals,
-                 goal_dim=args.goal_dim)
+                 goal_dim=args.goal_dim,
+                 num_modes=args.num_modes)
 
     # optimizer and schedular
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -581,7 +593,8 @@ def main(epochs=50):
     trainer = Trainer(model, optimizer=optimizer, lr_scheduler=lr_scheduler, device=args.device,
                       criterion=args.loss, batch_size=args.batch_size, obs_length=args.obs_length,
                       pred_length=args.pred_length, augment=args.augment, normalize_scene=args.normalize_scene,
-                      save_every=args.save_every, start_length=args.start_length, obs_dropout=args.obs_dropout)
+                      save_every=args.save_every, start_length=args.start_length, obs_dropout=args.obs_dropout,
+                      alpha_kld=args.alpha_kld, num_modes=args.num_modes)
     trainer.loop(train_scenes, val_scenes, train_goals, val_goals, args.output, epochs=args.epochs, start_epoch=start_epoch)
 
 

@@ -15,7 +15,9 @@ NAN = float('nan')
 class VAE(torch.nn.Module):
     """VAE forecasting model
     """
-    def __init__(self, embedding_dim=64, hidden_dim=128, latent_dim=128, pool=None, pool_to_input=True, goal_dim=None, goal_flag=False):
+    def __init__(self, embedding_dim=64, hidden_dim=128, \
+        latent_dim=128, pool=None, pool_to_input=True, \
+            goal_dim=None, goal_flag=False, num_modes=1):
         """ Initialize the VAE forecasting model
 
         Attributes
@@ -39,6 +41,7 @@ class VAE(torch.nn.Module):
         self.vae_input_dims = (int(vae_input_dim), int(vae_input_dim))
         self.pool = pool
         self.pool_to_input = pool_to_input
+        self.num_modes = num_modes
 
         ## Location
         scale = 4.0
@@ -61,7 +64,7 @@ class VAE(torch.nn.Module):
 
         ## cVAE
         self.vae_encoder = VAEEncoder(self.vae_input_dims, 2*self.latent_dim)
-        self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
+        self.vae_decoder = VAEDecoder(self.latent_dim, 2*self.hidden_dim)
 
         ## LSTM decoder
         self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, 2*self.hidden_dim)
@@ -229,16 +232,18 @@ class VAE(torch.nn.Module):
             positions = [observed[-1]]
 
         # list of predictions
-        normals = []  # predicted normal parameters for both phases
-        positions = []  # true (during obs phase) and predicted positions
+        normals = [[] for _ in range(self.num_modes)]  # predicted normal parameters for both phases
+        positions = [[] for _ in range(self.num_modes)]  # true (during obs phase) and predicted positions
 
         ## Observer encoder
         for obs1, obs2 in zip(observed[:-1], observed[1:]):
             # LSTM Step
             hidden_cell_state_obs, normal = self.step(self.obs_encoder, hidden_cell_state_obs, obs1, obs2, goals, batch_split)
             # concat predictions
-            normals.append(normal)
-            positions.append(obs2 + normal[:, :2])  # no sampling, just mean
+            
+            for normals_mode, positions_modes in zip(normals, positions):
+                normals_mode.append(normal)
+                positions_modes.append(obs2 + normal[:, :2]) # no sampling, just mean
     
         # initialize predictions with last position to form velocity
         prediction_truth = list(itertools.chain.from_iterable(
@@ -252,44 +257,52 @@ class VAE(torch.nn.Module):
 
         # Concatenation of hidden states
         hidden_cell_state = tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
+        # Save hidden cell state for multiple predictions
+        saved_hidden_cell_state = hidden_cell_state
 
         ## VAE encoder, latent distribution
         hidden_state = hidden_cell_state[0]
         z_mu, z_var_log = self.vae_encoder(hidden_state)
         z_distr = torch.cat((z_mu, z_var_log), dim=1)
 
-        ## Sampling using "reparametrization trick"
-        # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
-        epsilon = torch.empty(size=z_mu.size()).normal_(mean=0, std=1)
-        z_val = z_mu + torch.exp(z_var_log/2) * epsilon
+        # Make k predictions
+        for k in range(self.num_modes):
+            hidden_cell_state = saved_hidden_cell_state
+            ## Sampling using "reparametrization trick"
+            # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
+            epsilon = torch.empty(size=z_mu.size()).normal_(mean=0, std=1)
+            z_val = z_mu + torch.exp(z_var_log/2) * epsilon
 
-        ## VAE decoder
-        x_reconstr = self.vae_decoder(z_val)
-        
-        ## decoder, predictions
-        for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
-            if obs1 is None:
-                obs1 = positions[-2].detach()  # DETACH!!!
-            else:
-                for primary_id in batch_split[:-1]:
-                    obs1[primary_id] = positions[-2][primary_id].detach()  # DETACH!!!
-            if obs2 is None:
-                obs2 = positions[-1].detach()
-            else:
-                for primary_id in batch_split[:-1]:
-                    obs2[primary_id] = positions[-1][primary_id].detach()  # DETACH!!!
-            hidden_cell_state, normal = self.step(self.decoder, hidden_cell_state, obs1, obs2, goals, batch_split)
+            ## VAE decoder
+            x_reconstr = self.vae_decoder(z_val)
 
-            # concat predictions
-            normals.append(normal)
-            positions.append(obs2 + normal[:, :2])  # no sampling, just mean
+            hidden_cell = [hidden_cell_state[0][i] * x_reconstr[i] for i in range(len(hidden_cell_state[0]))]
+            hidden_cell_state = (hidden_cell, hidden_cell_state[1])
+            ## decoder, predictions
+            for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
+                if obs1 is None:
+                    obs1 = positions[k][-2].detach()  # DETACH!!!
+                else:
+                    for primary_id in batch_split[:-1]:
+                        obs1[primary_id] = positions[k][-2][primary_id].detach()  # DETACH!!!
+                if obs2 is None:
+                    obs2 = positions[k][-1].detach()
+                else:
+                    for primary_id in batch_split[:-1]:
+                        obs2[primary_id] = positions[k][-1][primary_id].detach()  # DETACH!!!
+                hidden_cell_state, normal = self.step(self.decoder, hidden_cell_state, obs1, obs2, goals, batch_split)
+
+                # concat predictions
+                normals[k].append(normal)
+                positions[k].append(obs2 + normal[:, :2])  # no sampling, just mean
 
         # Pred_scene: Tensor [seq_length, num_tracks, 2]
         #    Absolute positions of all pedestrians
         # Rel_pred_scene: Tensor [seq_length, num_tracks, 5]
         #    Velocities of all pedestrians
-        rel_pred_scene = torch.stack(normals, dim=0)
-        pred_scene = torch.stack(positions, dim=0)
+
+        rel_pred_scene = [torch.stack(normals_mode, dim=0) for normals_mode in normals]
+        pred_scene = [torch.stack(positions_mode, dim=0) for positions_mode in positions]
 
         return rel_pred_scene, pred_scene, z_distr
 
@@ -356,10 +369,11 @@ class VAEEncoder(torch.nn.Module):
     """
     def __init__(self, input_dims, output_dim):
         super(VAEEncoder, self).__init__()
+        # (sqrt(2*hidden_dim), sqrt(2*hidden_dim))
         self.input_dims = input_dims
         self.latent_dim = output_dim // 2
         self.conv = torch.nn.Sequential(collections.OrderedDict([
-          ('conv1', torch.nn.Conv2d(in_channels=5, out_channels=32, kernel_size=5)),
+          ('conv1', torch.nn.Conv2d(in_channels=1, out_channels=32, kernel_size=5)),
           ('conv2', torch.nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2)),
           ('conv3', torch.nn.Conv2d(in_channels=64, out_channels=128, kernel_size=5)),
         ]))
@@ -367,16 +381,18 @@ class VAEEncoder(torch.nn.Module):
         self.fc_var = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
 
     def forward(self, inputs):
+        # size : batch_size x nb_track * 2*hidden_dim
         inputs = torch.stack(inputs)
-        inputs = torch.reshape(inputs, shape=(-1, 5, self.input_dims[0], self.input_dims[1])) ## TODO: input=5=numTracks
+        inputs = torch.reshape(inputs, shape=(-1, 1, self.input_dims[0], self.input_dims[1])) ## TODO: input=5=numTracks
+        # size : batch_size x nb_track * sqrt(2*hidden_dim) * sqrt(2*hidden_dim)
         inputs = self.conv(inputs)
         inputs = torch.reshape(inputs, shape=(-1, 128))
         z_mu = self.fc_mu(inputs)
-        z_var = self.fc_var(inputs)
+        z_log_var = self.fc_var(inputs)
         
         # Logarithm of the variance
         # this allows for smoother representations for the latent space.
-        return z_mu, torch.log(z_var+1) ## +1 to avoid NaN
+        return z_mu, z_log_var
 
 
 class VAEDecoder(torch.nn.Module):
@@ -394,9 +410,10 @@ class VAEDecoder(torch.nn.Module):
         ]))
         self.fc = torch.nn.Linear(in_features=256, out_features=self.output_dim)
         self.relu = torch.nn.ReLU()
+        self.softmax = torch.nn.Softmax()
 
     def forward(self, inputs):
         inputs = torch.reshape(inputs, shape=(-1, self.input_dim, 1, 1))
         inputs = self.conv(inputs)
         inputs = torch.reshape(inputs, shape=(-1, 256))
-        return self.relu(self.fc(inputs))
+        return self.softmax(self.relu(self.fc(inputs)))
