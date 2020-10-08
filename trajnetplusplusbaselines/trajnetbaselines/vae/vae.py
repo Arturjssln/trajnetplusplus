@@ -64,10 +64,10 @@ class VAE(torch.nn.Module):
 
         ## cVAE
         self.vae_encoder = VAEEncoder(self.vae_input_dims, 2*self.latent_dim)
-        self.vae_decoder = VAEDecoder(self.latent_dim, 2*self.hidden_dim)
+        self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
 
         ## LSTM decoder
-        self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, 2*self.hidden_dim)
+        self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
 
         # Predict the parameters of a multivariate normal:
         # mu_vel_x, mu_vel_y, sigma_vel_x, sigma_vel_y, rho
@@ -231,9 +231,9 @@ class VAE(torch.nn.Module):
         if len(observed) == 2:
             positions = [observed[-1]]
 
-        # list of predictions
-        normals = [[] for _ in range(self.num_modes)]  # predicted normal parameters for both phases
-        positions = [[] for _ in range(self.num_modes)]  # true (during obs phase) and predicted positions
+        # list of predictions store a dictionary. Each key corresponds to one mode
+        normals = {mode: [] for mode in range(self.num_modes)} # predicted normal parameters for both phases
+        positions = {mode: [] for mode in range(self.num_modes)} # true (during obs phase) and predicted positions
 
         ## Observer encoder
         for obs1, obs2 in zip(observed[:-1], observed[1:]):
@@ -241,15 +241,15 @@ class VAE(torch.nn.Module):
             hidden_cell_state_obs, normal = self.step(self.obs_encoder, hidden_cell_state_obs, obs1, obs2, goals, batch_split)
             # concat predictions
             
-            for normals_mode, positions_modes in zip(normals, positions):
-                normals_mode.append(normal)
-                positions_modes.append(obs2 + normal[:, :2]) # no sampling, just mean
+            for mode_n, mode_p in zip(normals.keys(), positions.keys()):
+                normals[mode_n].append(normal)
+                positions[mode_p].append(obs2 + normal[:, :2]) # no sampling, just mean
     
         # initialize predictions with last position to form velocity
         prediction_truth = list(itertools.chain.from_iterable(
             (observed[-1:], prediction_truth)
         ))
-
+        
         ## Prediction encoder
         for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
             # LSTM Step
@@ -276,8 +276,8 @@ class VAE(torch.nn.Module):
             ## VAE decoder
             x_reconstr = self.vae_decoder(z_val)
 
-            hidden_cell = [hidden_cell_state[0][i] * x_reconstr[i] for i in range(len(hidden_cell_state[0]))]
-            hidden_cell_state = (hidden_cell, hidden_cell_state[1])
+            hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr[i] for i in range(len(hidden_cell_state_obs[0]))]
+            hidden_cell_state = (hidden_cell, hidden_cell_state_obs[1])
             ## decoder, predictions
             for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
                 if obs1 is None:
@@ -301,8 +301,8 @@ class VAE(torch.nn.Module):
         # Rel_pred_scene: Tensor [seq_length, num_tracks, 5]
         #    Velocities of all pedestrians
 
-        rel_pred_scene = [torch.stack(normals_mode, dim=0) for normals_mode in normals]
-        pred_scene = [torch.stack(positions_mode, dim=0) for positions_mode in positions]
+        rel_pred_scene = [torch.stack(normals[mode_n], dim=0) for mode_n in normals.keys()]
+        pred_scene = [torch.stack(positions[mode_p], dim=0) for mode_p in positions.keys()]
 
         return rel_pred_scene, pred_scene, z_distr
 
@@ -349,6 +349,7 @@ class VAEPredictor(object):
             for num_p in range(modes):
                 # _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, xy[obs_length:-1].clone())
                 _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict)
+               # _, output_scenes = self.model.inference(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict) # TODO
                 output_scenes = output_scenes.numpy()
                 if args.normalize_scene:
                     output_scenes = inverse_scene(output_scenes, rotation, center)
@@ -381,10 +382,8 @@ class VAEEncoder(torch.nn.Module):
         self.fc_var = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
 
     def forward(self, inputs):
-        # size : batch_size x nb_track * 2*hidden_dim
         inputs = torch.stack(inputs)
         inputs = torch.reshape(inputs, shape=(-1, 1, self.input_dims[0], self.input_dims[1])) ## TODO: input=5=numTracks
-        # size : batch_size x nb_track * sqrt(2*hidden_dim) * sqrt(2*hidden_dim)
         inputs = self.conv(inputs)
         inputs = torch.reshape(inputs, shape=(-1, 128))
         z_mu = self.fc_mu(inputs)
@@ -410,7 +409,7 @@ class VAEDecoder(torch.nn.Module):
         ]))
         self.fc = torch.nn.Linear(in_features=256, out_features=self.output_dim)
         self.relu = torch.nn.ReLU()
-        self.softmax = torch.nn.Softmax()
+        self.softmax = torch.nn.Softmax(dim=1)
 
     def forward(self, inputs):
         inputs = torch.reshape(inputs, shape=(-1, self.input_dim, 1, 1))

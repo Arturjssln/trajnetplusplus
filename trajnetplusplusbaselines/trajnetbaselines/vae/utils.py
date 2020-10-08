@@ -2,6 +2,7 @@ import math
 import random
 
 import numpy as np
+import torch
 
 def shift(xy, center):
     # theta = random.random() * 2.0 * math.pi
@@ -53,4 +54,27 @@ def drop_distant(xy, r=6.0):
     mask = np.nanmin(distance_2, axis=0) < r**2
     return xy[:, mask], mask
 
-    
+def sample_multivariate_distribution(mean, var, n_samples=None):
+    """
+    Draw random samples from a multivariate normal distribution 
+
+    Parameters
+    ----------
+    mean : Tensor [dim]
+        Mean of the multivariate distribution
+    var : Tensor [dim]
+        Diagonal coefficient of the covariance matrix
+    n_samples : int
+        Number of samples to draw. 
+        When not specified, a single sample is returned.
+
+    Returns
+    -------
+    samples : Tensor [n_samples, dim] or [dim]
+        The drawn samples, of size [n_samples, dim] if n_samples was provided. 
+        If not, the size is [dim]
+
+    """
+    cov_matrix = np.diag(var.numpy())
+    samples = np.random.multivariate_normal(mean.numpy(), cov_matrix, size=n_samples)
+    return torch.Tensor(samples)
