@@ -8,7 +8,7 @@ from .modules import InputEmbedding, Hidden2Normal
 
 import trajnetplusplustools
 from ..augmentation import inverse_scene
-from .utils import center_scene
+from .utils import center_scene, sample_multivariate_distribution
 
 NAN = float('nan')
 
@@ -251,27 +251,39 @@ class VAE(torch.nn.Module):
         ))
         
         ## Prediction encoder
-        for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
-            # LSTM Step
-            hidden_cell_state_pre, _ = self.step(self.pre_encoder, hidden_cell_state_pre, obs1, obs2, goals, batch_split)
+        if self.training:
+            for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
+                # LSTM Step
+                hidden_cell_state_pre, _ = self.step(self.pre_encoder, hidden_cell_state_pre, obs1, obs2, goals, batch_split)
 
-        # Concatenation of hidden states
-        hidden_cell_state = tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
+            # Concatenation of hidden states
+            hidden_cell_state = tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
+        
+        else: # eval mode 
+            hidden_cell_state = hidden_cell_state_obs
+        
         # Save hidden cell state for multiple predictions
         saved_hidden_cell_state = hidden_cell_state
 
         ## VAE encoder, latent distribution
-        hidden_state = hidden_cell_state[0]
-        z_mu, z_var_log = self.vae_encoder(hidden_state)
-        z_distr = torch.cat((z_mu, z_var_log), dim=1)
+        if self.training:
+            hidden_state = hidden_cell_state[0]
+            z_mu, z_var_log = self.vae_encoder(hidden_state)
+            z_distr = torch.cat((z_mu, z_var_log), dim=1)
 
         # Make k predictions
         for k in range(self.num_modes):
             hidden_cell_state = saved_hidden_cell_state
-            ## Sampling using "reparametrization trick"
-            # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
-            epsilon = torch.empty(size=z_mu.size()).normal_(mean=0, std=1)
-            z_val = z_mu + torch.exp(z_var_log/2) * epsilon
+            if self.training:
+                ## Sampling using "reparametrization trick"
+                # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
+                epsilon = torch.empty(size=z_mu.size()).normal_(mean=0, std=1)
+                z_val = z_mu + torch.exp(z_var_log/2) * epsilon
+            
+            else: # eval mode
+                # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
+                #TODO: find what is z_mu and z_var_log
+                z_val = sample_multivariate_distribution(z_mu, z_var_log)
 
             ## VAE decoder
             x_reconstr = self.vae_decoder(z_val)
