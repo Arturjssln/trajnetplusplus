@@ -412,6 +412,8 @@ def main(epochs=50):
                         help='loss objective to train the model')
     parser.add_argument('--goals', action='store_true',
                         help='flag to use goals')
+    parser.add_argument('--num_modes', default=1, type=int,
+                        help='Number of modes for reconstruction loss') 
 
 
     pretrain = parser.add_argument_group('pretraining')
@@ -470,9 +472,7 @@ def main(epochs=50):
     hyperparameters.add_argument('--start_length', default=0, type=int,
                                  help='start length during obs dropout')
     hyperparameters.add_argument('--alpha_kld', default=1, type=float,
-                                 help='multiplier coefficient for kld loss')
-    hyperparameters.add_argument('--num_modes', default=1, type=int,
-                                 help='Number of modes for reconstruction loss')                       
+                                 help='multiplier coefficient for kld loss')                      
     args = parser.parse_args()
 
     ## Fixed set of scenes if sampling
@@ -484,9 +484,9 @@ def main(epochs=50):
     if not os.path.exists('OUTPUT_BLOCK/{}'.format(args.path)):
         os.makedirs('OUTPUT_BLOCK/{}'.format(args.path))
     if args.goals:
-        args.output = 'OUTPUT_BLOCK/{}/vae_goals_{}_{}.pkl'.format(args.path, args.type, args.output)
+        args.output = 'OUTPUT_BLOCK/{}/vae_goals_{}_{}_{}.pkl'.format(args.path, args.type, args.output, args.num_modes)
     else:
-        args.output = 'OUTPUT_BLOCK/{}/vae_{}_{}.pkl'.format(args.path, args.type, args.output)
+        args.output = 'OUTPUT_BLOCK/{}/vae_{}_{}_{}.pkl'.format(args.path, args.type, args.output, args.num_modes)
 
     # configure logging
     from pythonjsonlogger import jsonlogger

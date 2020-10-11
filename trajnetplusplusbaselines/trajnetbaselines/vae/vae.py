@@ -282,7 +282,8 @@ class VAE(torch.nn.Module):
             
             else: # eval mode
                 # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
-                #TODO: find what is z_mu and z_var_log
+                z_mu = torch.zeros(size=self.latent_dim)
+                z_var = torch.ones(size=self.latent_dim)
                 z_val = sample_multivariate_distribution(z_mu, z_var_log)
 
             ## VAE decoder
@@ -360,8 +361,7 @@ class VAEPredictor(object):
             multimodal_outputs = {}
             for num_p in range(modes):
                 # _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, xy[obs_length:-1].clone())
-                _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict)
-               # _, output_scenes = self.model.inference(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict) # TODO
+                _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict) 
                 output_scenes = output_scenes.numpy()
                 if args.normalize_scene:
                     output_scenes = inverse_scene(output_scenes, rotation, center)
@@ -395,7 +395,7 @@ class VAEEncoder(torch.nn.Module):
 
     def forward(self, inputs):
         inputs = torch.stack(inputs)
-        inputs = torch.reshape(inputs, shape=(-1, 1, self.input_dims[0], self.input_dims[1])) ## TODO: input=5=numTracks
+        inputs = torch.reshape(inputs, shape=(-1, 1, self.input_dims[0], self.input_dims[1]))
         inputs = self.conv(inputs)
         inputs = torch.reshape(inputs, shape=(-1, 128))
         z_mu = self.fc_mu(inputs)
