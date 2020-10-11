@@ -326,7 +326,7 @@ class Trainer(object):
             ## groundtruth of neighbours not provided 
             self.model.eval()
             loss_test = 0
-            rel_outputs_test, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
+            rel_outputs_test, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
             for rel_outputs_mode in rel_outputs_test:
                 loss_test += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
             self.model.train()
