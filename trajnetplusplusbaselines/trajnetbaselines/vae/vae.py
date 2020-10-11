@@ -286,12 +286,11 @@ class VAE(torch.nn.Module):
                 # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
                 z_mu = torch.zeros(self.latent_dim)
                 z_var_log = torch.ones(self.latent_dim)
-                z_val = sample_multivariate_distribution(z_mu, z_var_log)
+                z_val = sample_multivariate_distribution(z_mu, z_var_log, n_samples=num_tracks)
 
             ## VAE decoder
-            x_reconstr = self.vae_decoder(z_val).reshape(-1)
-            
-            hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr for i in range(num_tracks)]
+            x_reconstr = self.vae_decoder(z_val)
+            hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr[i] for i in range(num_tracks)]
             hidden_cell_state = (hidden_cell, hidden_cell_state_obs[1])
             ## decoder, predictions
             for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
@@ -342,7 +341,7 @@ class VAEPredictor(object):
             return torch.load(f)
 
 
-    def __call__(self, paths, scene_goal, n_predict=12, predict_all=True, obs_length=9, start_length=0, args=None):
+    def __call__(self, paths, scene_goal, n_predict=12, predict_all=True, obs_length=9, start_length=0, modes=1, args=None):
         self.model.eval()
         # self.model.train()
         with torch.no_grad():
@@ -370,9 +369,13 @@ class VAEPredictor(object):
                     output_scenes_m = inverse_scene(output_scenes_m, rotation, center)
                 output_primary = output_scenes_m[-n_predict:, 0]
                 output_neighs = output_scenes_m[-n_predict:, 1:]
-                ## Dictionary of predictions. Each key corresponds to one mode
-                multimodal_outputs[mode] = [output_primary, output_neighs]
+                if mode == 0:
+                    ## Dictionary of predictions. Each key corresponds to one mode
+                    multimodal_outputs[mode] = [output_primary, output_neighs]
+                else:
+                    multimodal_outputs[mode] = [output_primary, []]
 
+        self.model.train()
         ## Return Dictionary of predictions. Each key corresponds to one mode
         return multimodal_outputs
 

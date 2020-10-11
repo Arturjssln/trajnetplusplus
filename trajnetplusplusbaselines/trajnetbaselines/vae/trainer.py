@@ -176,7 +176,7 @@ class Trainer(object):
         eval_start = time.time()
 
         val_loss = 0.0
-        # test_loss = 0.0 TODO: remove
+        test_loss = 0.0
         self.model.train()
 
         ## Initialize batch of scenes
@@ -217,10 +217,10 @@ class Trainer(object):
                 batch_scene_goal = torch.Tensor(batch_scene_goal).to(self.device)
                 batch_split = torch.Tensor(batch_split).to(self.device).long()
                 
-                #loss_val_batch, loss_test_batch = self.val_batch(batch_scene, batch_scene_goal, batch_split) TODO: remove
-                loss_val_batch = self.val_batch(batch_scene, batch_scene_goal, batch_split)
+                loss_val_batch, loss_test_batch = self.val_batch(batch_scene, batch_scene_goal, batch_split)
+                #loss_val_batch = self.val_batch(batch_scene, batch_scene_goal, batch_split)
                 val_loss += loss_val_batch
-                #test_loss += loss_test_batch
+                test_loss += loss_test_batch
 
                 ## Reset Batch
                 batch_scene = []
@@ -233,7 +233,7 @@ class Trainer(object):
             'type': 'val-epoch',
             'epoch': epoch + 1,
             'loss': round(val_loss / (len(scenes)), 3),
-            #'test_loss': round(test_loss / len(scenes), 3), TODO: remove
+            'test_loss': round(test_loss / len(scenes), 3), 
             'time': round(eval_time, 1),
         })
 
@@ -323,11 +323,15 @@ class Trainer(object):
             kdl_loss = self.kld_loss(inputs=z_distribution) * self.batch_size * self.loss_multiplier
             loss = reconstr_loss + self.alpha_kld * kdl_loss
             
-            ## groundtruth of neighbours not provided TODO: remove
-            #rel_outputs_test, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
-            #loss_test = self.criterion(rel_outputs_test[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier
+            ## groundtruth of neighbours not provided 
+            self.model.eval()
+            loss_test = 0
+            rel_outputs_test, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
+            for rel_outputs_mode in rel_outputs_test:
+                loss_test += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
+            self.model.train()
 
-        return loss.item()#, loss_test.item() TODO: remove
+        return loss.item(), loss_test.item()
 
 def prepare_data(path, subset='/train/', sample=1.0, goals=True):
     """ Prepares the train/val scenes and corresponding goals
