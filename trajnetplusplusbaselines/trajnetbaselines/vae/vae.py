@@ -270,6 +270,8 @@ class VAE(torch.nn.Module):
             hidden_state = hidden_cell_state[0]
             z_mu, z_var_log = self.vae_encoder(hidden_state)
             z_distr = torch.cat((z_mu, z_var_log), dim=1)
+        else: 
+            z_distr = None
 
         # Make k predictions
         for k in range(self.num_modes):
@@ -287,9 +289,9 @@ class VAE(torch.nn.Module):
                 z_val = sample_multivariate_distribution(z_mu, z_var_log)
 
             ## VAE decoder
-            x_reconstr = self.vae_decoder(z_val)
-
-            hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr[i] for i in range(len(hidden_cell_state_obs[0]))]
+            x_reconstr = self.vae_decoder(z_val).reshape(-1)
+            
+            hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr for i in range(num_tracks)]
             hidden_cell_state = (hidden_cell, hidden_cell_state_obs[1])
             ## decoder, predictions
             for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
@@ -361,7 +363,7 @@ class VAEPredictor(object):
             multimodal_outputs = {}
             for num_p in range(modes):
                 # _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, xy[obs_length:-1].clone())
-                _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict) 
+                _, output_scenes, _ = self.model(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict) 
                 output_scenes = output_scenes.numpy()
                 if args.normalize_scene:
                     output_scenes = inverse_scene(output_scenes, rotation, center)
