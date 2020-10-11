@@ -342,7 +342,7 @@ class VAEPredictor(object):
             return torch.load(f)
 
 
-    def __call__(self, paths, scene_goal, n_predict=12, modes=1, predict_all=True, obs_length=9, start_length=0, args=None):
+    def __call__(self, paths, scene_goal, n_predict=12, predict_all=True, obs_length=9, start_length=0, args=None):
         self.model.eval()
         # self.model.train()
         with torch.no_grad():
@@ -360,17 +360,18 @@ class VAEPredictor(object):
             scene_goal = torch.Tensor(scene_goal) #.to(device)
             batch_split = torch.Tensor(batch_split).long()
 
+            # _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, xy[obs_length:-1].clone())
+            _, output_scenes, _ = self.model(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict)
+
             multimodal_outputs = {}
-            for num_p in range(modes):
-                # _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, xy[obs_length:-1].clone())
-                _, output_scenes, _ = self.model(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict) 
-                output_scenes = output_scenes.numpy()
+            for mode in range(self.model.num_modes):
+                output_scenes_m = output_scenes[mode].numpy()
                 if args.normalize_scene:
-                    output_scenes = inverse_scene(output_scenes, rotation, center)
-                output_primary = output_scenes[-n_predict:, 0]
-                output_neighs = output_scenes[-n_predict:, 1:]
+                    output_scenes_m = inverse_scene(output_scenes_m, rotation, center)
+                output_primary = output_scenes_m[-n_predict:, 0]
+                output_neighs = output_scenes_m[-n_predict:, 1:]
                 ## Dictionary of predictions. Each key corresponds to one mode
-                multimodal_outputs[num_p] = [output_primary, output_neighs]
+                multimodal_outputs[mode] = [output_primary, output_neighs]
 
         ## Return Dictionary of predictions. Each key corresponds to one mode
         return multimodal_outputs
