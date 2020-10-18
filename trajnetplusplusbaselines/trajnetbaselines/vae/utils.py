@@ -54,27 +54,26 @@ def drop_distant(xy, r=6.0):
     mask = np.nanmin(distance_2, axis=0) < r**2
     return xy[:, mask], mask
 
-def sample_multivariate_distribution(mean, var_log, n_samples=None):
+def sample_multivariate_distribution(mean, var_log):
     """
     Draw random samples from a multivariate normal distribution 
 
     Parameters
     ----------
-    mean : Tensor [dim]
+    mean : Tensor [num_tracks, dim]
         Mean of the multivariate distribution
-    var_log : Tensor [dim]
+    var_log : Tensor [num_tracks, dim]
         Logarithm of the diagonal coefficients of the covariance matrix 
-    n_samples : int
-        Number of samples to draw. 
-        When not specified, a single sample is returned.
+
 
     Returns
     -------
-    samples : Tensor [n_samples, dim] or [dim]
-        The drawn samples, of size [n_samples, dim] if n_samples was provided. 
-        If not, the size is [dim]
+    samples : Tensor [num_tracks, dim]
+        The drawn samples of size [num_tracks, dim]
 
     """
-    cov_matrix = np.diag(torch.exp(var_log).numpy())
-    samples = np.random.multivariate_normal(mean.numpy(), cov_matrix, size=n_samples)
-    return torch.Tensor(samples)
+    samples = torch.zeros_like(mean)
+    for track in range(mean.size(0)):
+        cov_matrix = np.diag(torch.exp(var_log[track, :]).numpy())
+        samples[track, :] = torch.Tensor(np.random.multivariate_normal(mean[track, :].numpy(), cov_matrix))
+    return samples
