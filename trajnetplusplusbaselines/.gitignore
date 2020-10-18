@@ -2,7 +2,10 @@ data/
 dest/
 dest_new/
 
-DATA_BLOCK/
+DATA_BLOCK/trajdata/
+DATA_BLOCK/collision_test/
+DATA_BLOCK/*/test_pred/
+DATA_BLOCK/*/test_results/
 output/
 OUTPUT_BLOCK/
 socialforce-master/
