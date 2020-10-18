@@ -288,9 +288,15 @@ class VAE(torch.nn.Module):
         if self.training:
             hidden_state = hidden_cell_state[0]
             z_mu, z_var_log = self.vae_encoder(hidden_state)
-            z_distr = torch.cat((z_mu, z_var_log), dim=1)
+            z_distr_xy = torch.cat((z_mu, z_var_log), dim=1)
+
         else: 
-            z_distr = None
+            z_distr_xy = None
+
+        # Compute p_z_x (multivariate distribution depending only from the observations)
+        hidden_state_obs = hidden_cell_state_obs[0].detach() # DETACH!!!
+        z_mu_obs, z_var_log_obs = self.vae_encoder(hidden_state)
+        z_distr_x = torch.cat((z_mu_obs, z_var_log_obs), dim=1)
 
         # Make k predictions
         for k in range(self.num_modes):
@@ -308,11 +314,8 @@ class VAE(torch.nn.Module):
                         })
             
             else: # eval mode
-                # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
-                z_mu = torch.zeros(self.latent_dim)
-                z_var_log = torch.ones(self.latent_dim)
-                z_val = sample_multivariate_distribution(z_mu, z_var_log, n_samples=num_tracks)
-                z_val = sample_multivariate_distribution(z_mu_obs, z_var_log_obs, n_samples=num_tracks)
+                # Draw a sample from the observed multivariate distribution (z_mu_obs, z_var_log_obs)
+                z_val = sample_multivariate_distribution(z_mu_obs, z_var_log_obs,)
 
             ## VAE decoder
             x_reconstr = self.vae_decoder(z_val)
@@ -344,7 +347,7 @@ class VAE(torch.nn.Module):
         rel_pred_scene = [torch.stack(normals[mode_n], dim=0) for mode_n in normals.keys()]
         pred_scene = [torch.stack(positions[mode_p], dim=0) for mode_p in positions.keys()]
 
-        return rel_pred_scene, pred_scene, z_distr
+        return rel_pred_scene, pred_scene, z_distr_xy, z_distr_x
 
 
 class VAEPredictor(object):
