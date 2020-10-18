@@ -17,7 +17,6 @@ evaluator/old_table/
 	
 *.txt
 *.png
-*.sh
 *.run
 *.pt
 
