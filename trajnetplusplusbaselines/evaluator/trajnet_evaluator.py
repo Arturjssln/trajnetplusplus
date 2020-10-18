@@ -4,7 +4,7 @@ import argparse
 
 import pickle
 from joblib import Parallel, delayed
-import scipy
+import numpy as np
 
 import trajnetplusplustools
 import evaluator.write as write
@@ -332,7 +332,7 @@ def main():
                         help='number of modes to predict')
     args = parser.parse_args()
 
-    scipy.seterr('ignore')
+    np.seterr('ignore')
 
     ## Path to the data folder name to predict
     args.path = 'DATA_BLOCK/' + args.path + '/'

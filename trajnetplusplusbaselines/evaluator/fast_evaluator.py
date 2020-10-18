@@ -6,7 +6,6 @@ import argparse
 import pickle
 
 import numpy as np
-import scipy
 import torch
 
 import trajnetplusplustools
@@ -51,7 +50,7 @@ def main():
                         help='number of modes to predict')
     args = parser.parse_args()
 
-    scipy.seterr('ignore')
+    np.seterr('ignore')
 
     ## Path to the data folder name to predict
     args.path = 'DATA_BLOCK/' + args.path + '/'

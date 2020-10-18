@@ -273,10 +273,10 @@ def main():
     else:
         # Note: Generate Trajectories First! See command below
         ## 'python -m trajnetdataset.controlled_data <args>'
-        write(controlled(sc, 'data/raw/controlled/orca_circle_crossing_5ped_1000scenes_.txt'),
+        write(controlled(sc, 'data/raw/controlled/orca_circle_crossing_5ped_100scenes_.txt'),
               'output_pre/{split}/orca_five_synth.ndjson', args)
         categorize(sc, 'output_pre/{split}/orca_five_synth.ndjson', args)
-        edit_goal_file('orca_circle_crossing_5ped_1000scenes_.pkl', 'orca_five_synth.pkl')
+        edit_goal_file('orca_circle_crossing_5ped_100scenes_.pkl', 'orca_five_synth.pkl')
 
 if __name__ == '__main__':
     main()
