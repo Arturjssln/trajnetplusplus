@@ -418,6 +418,8 @@ def main(epochs=50):
                         help='flag to use goals')
     parser.add_argument('--num_modes', default=1, type=int,
                         help='Number of modes for reconstruction loss') 
+    parser.add_argument('--debug_mode', action='store_true',
+                        help='Activate debug mode') 
 
 
     pretrain = parser.add_argument_group('pretraining')
@@ -564,7 +566,8 @@ def main(epochs=50):
                  hidden_dim=args.hidden_dim,
                  goal_flag=args.goals,
                  goal_dim=args.goal_dim,
-                 num_modes=args.num_modes)
+                 num_modes=args.num_modes,
+                 debug_mode=args.debug_mode)
 
     # optimizer and schedular
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)

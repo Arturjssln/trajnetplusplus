@@ -2,3 +2,4 @@ trajnetv/*
 /.DS_Store
 .vscode/settings.json
 trajnetplusplusbaselines/trajnetbaselines/vae/playground.py
+trajnetplusplusbaselines/z_val.log

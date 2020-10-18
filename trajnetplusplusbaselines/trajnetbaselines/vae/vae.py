@@ -9,6 +9,7 @@ from .modules import InputEmbedding, Hidden2Normal
 import trajnetplusplustools
 from ..augmentation import inverse_scene
 from .utils import center_scene, sample_multivariate_distribution
+import logging
 
 NAN = float('nan')
 
@@ -17,7 +18,7 @@ class VAE(torch.nn.Module):
     """
     def __init__(self, embedding_dim=64, hidden_dim=128, \
         latent_dim=128, pool=None, pool_to_input=True, \
-            goal_dim=None, goal_flag=False, num_modes=1):
+            goal_dim=None, goal_flag=False, num_modes=1, debug_mode = False):
         """ Initialize the VAE forecasting model
 
         Attributes
@@ -42,6 +43,7 @@ class VAE(torch.nn.Module):
         self.pool = pool
         self.pool_to_input = pool_to_input
         self.num_modes = num_modes
+        self.debug_mode = debug_mode
 
         ## Location
         scale = 4.0
@@ -75,6 +77,23 @@ class VAE(torch.nn.Module):
         self.hidden2normal_decoder = Hidden2Normal(2*self.hidden_dim)
 
         assert(vae_input_dim.is_integer())
+
+        # Logger
+        # # configure logging
+        if self.debug_mode:
+            from pythonjsonlogger import jsonlogger
+            import sys
+            handler = logging.FileHandler('z_val.log')   
+            formatter = logging.Formatter('%(message)s')     
+            handler.setFormatter(formatter)
+
+            self.logger = logging.getLogger('z_val')
+            self.logger.setLevel(logging.DEBUG)
+            self.logger.addHandler(handler)
+            self.logger.debug({
+                'type': 'process',
+                'argv': sys.argv,
+            }) 
 
         
 
@@ -281,6 +300,12 @@ class VAE(torch.nn.Module):
                 # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
                 epsilon = torch.empty(size=z_mu.size()).normal_(mean=0, std=1)
                 z_val = z_mu + torch.exp(z_var_log/2) * epsilon
+                if self.debug_mode:
+                    import numpy as np
+                    if(np.random.random() > 0.9):
+                        self.logger.debug({
+                            "z_val": list(z_val[0].detach().numpy()),
+                        })
             
             else: # eval mode
                 # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
