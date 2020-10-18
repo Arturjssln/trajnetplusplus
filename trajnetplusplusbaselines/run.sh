@@ -7,4 +7,4 @@
 #SBATCH --time 60:00:00 
 
 source /home/jesslen/venvs/trajnetv/bin/activate
-srun python -m trajnetbaselines.vae.trainer --path synth_data --type nn --epochs 10
+srun python -m trajnetbaselines.vae.trainer --epochs 15 --step_size 6 --path data_test --goals --type nn 
