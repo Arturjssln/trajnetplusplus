@@ -276,7 +276,7 @@ class Trainer(object):
         kdl_loss = self.kld_loss(inputs=z_distribution) * self.batch_size
         
         ## Total loss is the sum of the reconstruction loss and the kld loss
-        loss = kdl_loss + self.alpha_kld * reconstr_loss
+        loss = reconstr_loss + self.alpha_kld * kld_loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()

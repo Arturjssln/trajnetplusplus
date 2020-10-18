@@ -300,7 +300,7 @@ class VAE(torch.nn.Module):
                 # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
                 epsilon = torch.empty(size=z_mu.size()).normal_(mean=0, std=1)
                 z_val = z_mu + torch.exp(z_var_log/2) * epsilon
-                if self.debug_mode:
+                if self.debug_mode:  # TODO: remove
                     import numpy as np
                     if(np.random.random() > 0.9):
                         self.logger.debug({
@@ -312,6 +312,7 @@ class VAE(torch.nn.Module):
                 z_mu = torch.zeros(self.latent_dim)
                 z_var_log = torch.ones(self.latent_dim)
                 z_val = sample_multivariate_distribution(z_mu, z_var_log, n_samples=num_tracks)
+                z_val = sample_multivariate_distribution(z_mu_obs, z_var_log_obs, n_samples=num_tracks)
 
             ## VAE decoder
             x_reconstr = self.vae_decoder(z_val)
