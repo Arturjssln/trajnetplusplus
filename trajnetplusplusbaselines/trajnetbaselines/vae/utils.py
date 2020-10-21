@@ -60,15 +60,15 @@ def sample_multivariate_distribution(mean, var_log):
 
     Parameters
     ----------
-    mean : Tensor [num_tracks, dim]
-        Mean of the multivariate distribution
+    mean : Tensor [num_tracks, dim]  
+        Mean of the multivariate distribution  
     var_log : Tensor [num_tracks, dim]
         Logarithm of the diagonal coefficients of the covariance matrix 
 
 
     Returns
     -------
-    samples : Tensor [num_tracks, dim]
+    samples : Tensor [num_tracks, dim]  
         The drawn samples of size [num_tracks, dim]
 
     """

@@ -370,7 +370,7 @@ def prepare_data(path, subset='/train/', sample=1.0, goals=True, goal_files='goa
         ## Necessary modification of train scene to add filename
         scene = [(file, s_id, s) for s_id, s in reader.scenes(sample=sample)]
         if goals:
-            goal_dict = pickle.load(open(goal_files + '/' + subset + file +'.pkl', "rb"))
+            goal_dict = pickle.load(open(goal_files + subset + file +'.pkl', "rb"))
             ## Get goals corresponding to train scene
             all_goals[file] = {s_id: [goal_dict[path[0].pedestrian] for path in s] for _, s_id, s in scene}
         all_scenes += scene

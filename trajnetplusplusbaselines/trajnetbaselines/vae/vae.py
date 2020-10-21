@@ -309,8 +309,8 @@ class VAE(torch.nn.Module):
             
             else: # eval mode
                 # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
-                z_mu = torch.zeros(self.latent_dim)
-                z_var_log = torch.ones(self.latent_dim)
+                z_mu = torch.zeros(num_tracks, self.latent_dim)
+                z_var_log = torch.ones(num_tracks, self.latent_dim)
                 z_val = sample_multivariate_distribution(z_mu, z_var_log)
 
             ## VAE decoder
