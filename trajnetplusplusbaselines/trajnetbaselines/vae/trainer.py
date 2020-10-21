@@ -273,7 +273,7 @@ class Trainer(object):
         for rel_outputs_mode in rel_outputs:
             reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
         # KLD loss
-        kdl_loss = self.kld_loss(inputs=z_distr_xy, targets=z_distr_x) * self.batch_size
+        kld_loss = self.kld_loss(inputs=z_distr_xy, outputs=z_distr_x) * self.batch_size
         
         ## Total loss is the sum of the reconstruction loss and the kld loss
         loss = reconstr_loss + self.alpha_kld * kld_loss
@@ -316,12 +316,12 @@ class Trainer(object):
 
         with torch.no_grad():
             ## groundtruth of neighbours provided (Better validation curve to monitor model)
-            rel_outputs, _, z_distribution = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
+            rel_outputs, _, z_distr_xy, z_distr_x = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
             reconstr_loss = 0
             for rel_outputs_mode in rel_outputs:
                 reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
-            kdl_loss = self.kld_loss(inputs=z_distribution) * self.batch_size * self.loss_multiplier
-            loss = reconstr_loss + self.alpha_kld * kdl_loss
+            kld_loss = self.kld_loss(inputs=z_distr_xy, outputs=z_distr_x) * self.batch_size * self.loss_multiplier
+            loss = reconstr_loss + self.alpha_kld * kld_loss
             
             ## groundtruth of neighbours not provided 
             self.model.eval()
