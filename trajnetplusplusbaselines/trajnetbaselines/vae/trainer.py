@@ -273,7 +273,7 @@ class Trainer(object):
         for rel_outputs_mode in rel_outputs:
             reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
         # KLD loss
-        kld_loss = self.kld_loss(inputs=z_distr_xy, targets=z_distr_x) * self.batch_size
+        kld_loss = self.kld_loss(inputs=z_distribution) * self.batch_size
         
         ## Total loss is the sum of the reconstruction loss and the kld loss
         loss = reconstr_loss + self.alpha_kld * kld_loss

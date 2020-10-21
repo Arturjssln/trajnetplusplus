@@ -6,3 +6,5 @@ trajnetplusplusbaselines/z_val.log
 trajnetplusplusbaselines/DATA_BLOCK/synth_large_54/
 trajnetplusplusbaselines/goal_files_54
 trajnetplusplusbaselines/goal_files
+*.out
+*.sh
