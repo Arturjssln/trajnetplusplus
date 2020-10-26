@@ -305,7 +305,7 @@ class VAE(torch.nn.Module):
                 ## Sampling using "reparametrization trick"
                 # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
                 epsilon = torch.empty(size=z_mu.size()).normal_(mean=0, std=1)
-                z_val = z_mu + torch.exp(z_var_log/2) * epsilon
+                z_val = z_mu + torch.exp(0.5*z_var_log) * epsilon
                 if self.debug_mode:  # TODO: remove
                     import numpy as np
                     if(np.random.random() > 0.9):
