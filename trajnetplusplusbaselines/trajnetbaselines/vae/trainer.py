@@ -333,7 +333,7 @@ class Trainer(object):
 
         return loss.item(), loss_test.item()
 
-def prepare_data(path, subset='/train/', sample=1.0, goals=True):
+def prepare_data(path, subset='/train/', sample=1.0, goals=True, goal_files='goal_files'):
     """ Prepares the train/val scenes and corresponding goals
     
     Parameters
@@ -344,8 +344,11 @@ def prepare_data(path, subset='/train/', sample=1.0, goals=True):
         Determines the ratio of data to be sampled
     goals: Bool
         If true, the goals of each track are extracted
-        The corresponding goal file must be present in the 'goal_files' folder
+        The corresponding goal file must be present in the goal_files folder
         The name of the goal file must be the same as the name of the training file
+    goal_files : String
+         Path to goal files data
+         Default: 'goal_files'
 
     Returns
     -------
@@ -368,8 +371,7 @@ def prepare_data(path, subset='/train/', sample=1.0, goals=True):
         ## Necessary modification of train scene to add filename
         scene = [(file, s_id, s) for s_id, s in reader.scenes(sample=sample)]
         if goals:
-            goal_dict = pickle.load(open('goal_files/' + subset + file +'.pkl', "rb"))
-            ## Get goals corresponding to train scene
+            goal_dict = pickle.load(open(goal_files + '/' + subset + file +'.pkl', "rb"))            ## Get goals corresponding to train scene
             all_goals[file] = {s_id: [goal_dict[path[0].pedestrian] for path in s] for _, s_id, s in scene}
         all_scenes += scene
 
@@ -419,7 +421,9 @@ def main(epochs=50):
     parser.add_argument('--num_modes', default=1, type=int,
                         help='Number of modes for reconstruction loss') 
     parser.add_argument('--debug_mode', action='store_true',
-                        help='Activate debug mode') 
+                        help='Activate debug mode')
+    parser.add_argument('--goal_files', default='goal_files',
+                         help='Path for goal files')  
 
 
     pretrain = parser.add_argument_group('pretraining')
@@ -527,9 +531,8 @@ def main(epochs=50):
 
     args.path = 'DATA_BLOCK/' + args.path
     ## Prepare data
-    train_scenes, train_goals = prepare_data(args.path, subset='/train/', sample=args.sample, goals=args.goals)
-    val_scenes, val_goals = prepare_data(args.path, subset='/val/', sample=args.sample, goals=args.goals)
-
+    train_scenes, train_goals = prepare_data(args.path, subset='/train/', sample=args.sample, goals=args.goals, goal_files=args.goal_files)
+    val_scenes, val_goals = prepare_data(args.path, subset='/val/', sample=args.sample, goals=args.goals, goal_files=args.goal_files)
     ## pretrained pool model (if any)
     pretrained_pool = None
 
