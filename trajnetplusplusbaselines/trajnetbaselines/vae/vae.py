@@ -66,6 +66,7 @@ class VAE(torch.nn.Module):
 
         ## cVAE
         self.vae_encoder = VAEEncoder(self.vae_input_dims, 2*self.latent_dim)
+        self.p_z_x = toLatent(self.hidden_dim, 2*self.latent_dim) #TODO: check
         self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
 
         ## LSTM decoder
@@ -248,11 +249,13 @@ class VAE(torch.nn.Module):
 
 
         if len(observed) == 2:
-            positions = [observed[-1]]
+            pos = [observed[-1]]
+        else:
+            pos = []
 
         # list of predictions store a dictionary. Each key corresponds to one mode
         normals = {mode: [] for mode in range(self.num_modes)} # predicted normal parameters for both phases
-        positions = {mode: [] for mode in range(self.num_modes)} # true (during obs phase) and predicted positions
+        positions = {mode: pos for mode in range(self.num_modes)} 
 
         ## Observer encoder
         for obs1, obs2 in zip(observed[:-1], observed[1:]):
@@ -294,8 +297,8 @@ class VAE(torch.nn.Module):
             z_distr_xy = None
 
         # Compute p_z_x (multivariate distribution depending only from the observations)
-        hidden_state_obs = hidden_cell_state_obs[0].detach() # DETACH!!!
-        z_mu_obs, z_var_log_obs = self.vae_encoder(hidden_state)
+        #hidden_state_obs = [state.detach() for state in hidden_cell_state_obs[0]]
+        z_mu_obs, z_var_log_obs = self.p_z_x(hidden_cell_state_obs[0]) #TODO: check
         z_distr_x = torch.cat((z_mu_obs, z_var_log_obs), dim=1)
 
         # Make k predictions
@@ -315,7 +318,7 @@ class VAE(torch.nn.Module):
             
             else: # eval mode
                 # Draw a sample from the observed multivariate distribution (z_mu_obs, z_var_log_obs)
-                z_val = sample_multivariate_distribution(z_mu_obs, z_var_log_obs,)
+                z_val = sample_multivariate_distribution(z_mu_obs, z_var_log_obs)
 
             ## VAE decoder
             x_reconstr = self.vae_decoder(z_val)
@@ -333,6 +336,7 @@ class VAE(torch.nn.Module):
                 else:
                     for primary_id in batch_split[:-1]:
                         obs2[primary_id] = positions[k][-1][primary_id].detach()  # DETACH!!!
+
                 hidden_cell_state, normal = self.step(self.decoder, hidden_cell_state, obs1, obs2, goals, batch_split)
 
                 # concat predictions
@@ -420,11 +424,18 @@ class VAEEncoder(torch.nn.Module):
         # (sqrt(2*hidden_dim), sqrt(2*hidden_dim))
         self.input_dims = input_dims
         self.latent_dim = output_dim // 2
-        self.conv = torch.nn.Sequential(collections.OrderedDict([
-          ('conv1', torch.nn.Conv2d(in_channels=1, out_channels=32, kernel_size=5)),
-          ('conv2', torch.nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2)),
-          ('conv3', torch.nn.Conv2d(in_channels=64, out_channels=128, kernel_size=5)),
-        ]))
+        if self.input_dims[0] == self.input_dims[1]:
+            self.conv = torch.nn.Sequential(collections.OrderedDict([
+            ('conv1', torch.nn.Conv2d(in_channels=1, out_channels=32, kernel_size=5)),
+            ('conv2', torch.nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2)),
+            ('conv3', torch.nn.Conv2d(in_channels=64, out_channels=128, kernel_size=5)),
+            ]))
+        else:
+            self.conv = torch.nn.Sequential(collections.OrderedDict([
+            ('conv1', torch.nn.Conv2d(in_channels=1, out_channels=32, kernel_size=(5,3))),
+            ('conv2', torch.nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=(2,1))),
+            ('conv3', torch.nn.Conv2d(in_channels=64, out_channels=128, kernel_size=(5,4))),
+            ]))
         self.fc_mu = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
         self.fc_var = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
 
@@ -463,3 +474,23 @@ class VAEDecoder(torch.nn.Module):
         inputs = self.conv(inputs)
         inputs = torch.reshape(inputs, shape=(-1, 256))
         return self.softmax(self.relu(self.fc(inputs)))
+
+
+class toLatent(torch.nn.Module):
+    """Project x distribution on latent space TODO : change description
+
+    """
+    def __init__(self, input_dim, output_dim):
+        super(toLatent, self).__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.fc_mu = torch.nn.Linear(in_features=self.input_dim, out_features=self.output_dim//2)
+        self.fc_var = torch.nn.Linear(in_features=self.input_dim, out_features=self.output_dim//2)
+        self.relu = torch.nn.ReLU()
+
+    def forward(self, inputs):
+        inputs = torch.stack(inputs)
+        inputs = torch.reshape(inputs, shape=(-1, self.input_dim))
+        z_mu = self.relu(self.fc_mu(inputs))
+        z_log_var = self.relu(self.fc_var(inputs))
+        return z_mu, z_log_var
