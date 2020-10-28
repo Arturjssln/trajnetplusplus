@@ -38,8 +38,8 @@ class VAE(torch.nn.Module):
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
-        vae_input_dim = torch.sqrt(torch.Tensor([2*self.hidden_dim])).item()
-        self.vae_input_dims = (int(vae_input_dim), int(vae_input_dim))
+        vae_input_dim = torch.sqrt(torch.Tensor([2*self.hidden_dim])).item() # TODO remove
+        self.vae_input_dims = (int(vae_input_dim), int(vae_input_dim)) #TODO remove
         self.pool = pool
         self.pool_to_input = pool_to_input
         self.num_modes = num_modes
@@ -65,7 +65,7 @@ class VAE(torch.nn.Module):
         self.pre_encoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
 
         ## cVAE
-        self.vae_encoder = VAEEncoder(self.vae_input_dims, 2*self.latent_dim)
+        self.vae_encoder_xy = VAEEncoder(2*self.hidden_dim, 2*self.latent_dim)
         self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
 
         ## LSTM decoder
@@ -248,11 +248,13 @@ class VAE(torch.nn.Module):
 
 
         if len(observed) == 2:
-            positions = [observed[-1]]
+            pos = [observed[-1]]
+        else:
+            pos = []
 
         # list of predictions store a dictionary. Each key corresponds to one mode
-        normals = {mode: [] for mode in range(self.num_modes)} # predicted normal parameters for both phases
-        positions = {mode: [] for mode in range(self.num_modes)} # true (during obs phase) and predicted positions
+        normals = {mode: pos for mode in range(self.num_modes)} # predicted normal parameters for both phases
+        positions = {mode: pos for mode in range(self.num_modes)} # true (during obs phase) and predicted positions
 
         ## Observer encoder
         for obs1, obs2 in zip(observed[:-1], observed[1:]):
@@ -287,7 +289,7 @@ class VAE(torch.nn.Module):
         ## VAE encoder, latent distribution
         if self.training:
             hidden_state = hidden_cell_state[0]
-            z_mu, z_var_log = self.vae_encoder(hidden_state)
+            z_mu, z_var_log = self.vae_encoder_xy(hidden_state)
             z_distr = torch.cat((z_mu, z_var_log), dim=1)
         else: 
             z_distr = None
@@ -405,57 +407,96 @@ class VAEPredictor(object):
         return multimodal_outputs
 
 
+# class VAEEncoder(torch.nn.Module):
+#     """C-VAE Encoder
+
+#     """
+#     def __init__(self, input_dims, output_dim):
+#         super(VAEEncoder, self).__init__()
+#         self.input_dims = input_dims
+#         self.latent_dim = output_dim // 2
+#         if self.input_dims[0] == self.input_dims[1]:
+#             self.conv = torch.nn.Sequential(collections.OrderedDict([
+#             ('conv1', torch.nn.Conv2d(in_channels=1, out_channels=32, kernel_size=5)),
+#             ('conv2', torch.nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2)),
+#             ('conv3', torch.nn.Conv2d(in_channels=64, out_channels=128, kernel_size=5)),
+#             ]))
+#         else:
+#             self.conv = torch.nn.Sequential(collections.OrderedDict([
+#             ('conv1', torch.nn.Conv2d(in_channels=1, out_channels=32, kernel_size=(5,3))),
+#             ('conv2', torch.nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=(2,1))),
+#             ('conv3', torch.nn.Conv2d(in_channels=64, out_channels=128, kernel_size=(5,4))),
+#             ]))
+#         self.fc_mu = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
+#         self.fc_var = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
+
+#     def forward(self, inputs):
+#         inputs = torch.stack(inputs)
+#         inputs = torch.reshape(inputs, shape=(-1, 1, self.input_dims[0], self.input_dims[1]))
+#         inputs = self.conv(inputs)
+#         inputs = torch.reshape(inputs, shape=(-1, 128))
+#         z_mu = self.fc_mu(inputs)
+#         z_log_var = self.fc_var(inputs)
+        
+#         # Logarithm of the variance
+#         # this allows for smoother representations for the latent space.
+#         return z_mu, z_log_var
+
+
+# class VAEDecoder(torch.nn.Module):
+#     """C-VAE Decoder
+
+#     """
+#     def __init__(self, input_dim, output_dim):
+#         super(VAEDecoder, self).__init__()
+#         self.input_dim = input_dim
+#         self.output_dim = output_dim
+#         self.conv = torch.nn.Sequential(collections.OrderedDict([
+#           ('conv1', torch.nn.ConvTranspose2d(in_channels=self.input_dim, out_channels=64, kernel_size=5)),
+#           ('conv2', torch.nn.ConvTranspose2d(in_channels=64, out_channels=32, kernel_size=4, stride=2)),
+#           ('conv3', torch.nn.ConvTranspose2d(in_channels=32, out_channels=1, kernel_size=5))
+#         ]))
+#         self.fc = torch.nn.Linear(in_features=256, out_features=self.output_dim)
+#         self.relu = torch.nn.ReLU()
+#         self.softmax = torch.nn.Softmax(dim=1)
+
+#     def forward(self, inputs):
+#         inputs = torch.reshape(inputs, shape=(-1, self.input_dim, 1, 1))
+#         inputs = self.conv(inputs)
+#         inputs = torch.reshape(inputs, shape=(-1, 256))
+#         return self.softmax(self.relu(self.fc(inputs)))
 
 
 class VAEEncoder(torch.nn.Module):
-    """C-VAE Encoder
+    """Project x distribution on latent space TODO : change description
 
     """
-    def __init__(self, input_dims, output_dim):
+    def __init__(self, input_dim, output_dim):
         super(VAEEncoder, self).__init__()
-        # (sqrt(2*hidden_dim), sqrt(2*hidden_dim))
-        self.input_dims = input_dims
-        self.latent_dim = output_dim // 2
-        self.conv = torch.nn.Sequential(collections.OrderedDict([
-          ('conv1', torch.nn.Conv2d(in_channels=1, out_channels=32, kernel_size=5)),
-          ('conv2', torch.nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2)),
-          ('conv3', torch.nn.Conv2d(in_channels=64, out_channels=128, kernel_size=5)),
-        ]))
-        self.fc_mu = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
-        self.fc_var = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
+        self.input_dim = input_dim
+        self.output_dim = output_dim
+        self.fc_mu = torch.nn.Linear(in_features=self.input_dim, out_features=self.output_dim//2)
+        self.fc_var = torch.nn.Linear(in_features=self.input_dim, out_features=self.output_dim//2)
+        self.relu = torch.nn.ReLU()
 
     def forward(self, inputs):
         inputs = torch.stack(inputs)
-        inputs = torch.reshape(inputs, shape=(-1, 1, self.input_dims[0], self.input_dims[1]))
-        inputs = self.conv(inputs)
-        inputs = torch.reshape(inputs, shape=(-1, 128))
-        z_mu = self.fc_mu(inputs)
-        z_log_var = self.fc_var(inputs)
-        
-        # Logarithm of the variance
-        # this allows for smoother representations for the latent space.
+        inputs = torch.reshape(inputs, shape=(-1, self.input_dim))
+        z_mu = self.relu(self.fc_mu(inputs))
+        z_log_var = self.relu(self.fc_var(inputs))
         return z_mu, z_log_var
 
-
 class VAEDecoder(torch.nn.Module):
-    """C-VAE Decoder
+    """Project x distribution on latent space TODO : change description
 
     """
     def __init__(self, input_dim, output_dim):
         super(VAEDecoder, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
-        self.conv = torch.nn.Sequential(collections.OrderedDict([
-          ('conv1', torch.nn.ConvTranspose2d(in_channels=self.input_dim, out_channels=64, kernel_size=5)),
-          ('conv2', torch.nn.ConvTranspose2d(in_channels=64, out_channels=32, kernel_size=4, stride=2)),
-          ('conv3', torch.nn.ConvTranspose2d(in_channels=32, out_channels=1, kernel_size=5))
-        ]))
-        self.fc = torch.nn.Linear(in_features=256, out_features=self.output_dim)
+        self.fc = torch.nn.Linear(in_features=self.input_dim, out_features=self.output_dim)
         self.relu = torch.nn.ReLU()
-        self.softmax = torch.nn.Softmax(dim=1)
 
     def forward(self, inputs):
-        inputs = torch.reshape(inputs, shape=(-1, self.input_dim, 1, 1))
-        inputs = self.conv(inputs)
-        inputs = torch.reshape(inputs, shape=(-1, 256))
-        return self.softmax(self.relu(self.fc(inputs)))
+        inputs = torch.reshape(inputs, shape=(-1, self.input_dim))
+        return self.relu(self.fc(inputs))
