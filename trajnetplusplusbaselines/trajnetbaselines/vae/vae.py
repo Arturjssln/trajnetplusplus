@@ -247,14 +247,14 @@ class VAE(torch.nn.Module):
             self.pool.reset(num_tracks, device=observed.device)
 
 
-        if len(observed) == 2:
+        if len(observed) == 2: # TODO: ask What's the point of this ? 
             pos = [observed[-1]]
         else:
             pos = []
 
         # list of predictions store a dictionary. Each key corresponds to one mode
-        normals = {mode: pos for mode in range(self.num_modes)} # predicted normal parameters for both phases
-        positions = {mode: pos for mode in range(self.num_modes)} # true (during obs phase) and predicted positions
+        normals = {mode: [] for mode in range(self.num_modes)} # predicted normal parameters for both phases
+        positions = {mode: [] for mode in range(self.num_modes)} # true (during obs phase) and predicted positions
 
         ## Observer encoder
         for obs1, obs2 in zip(observed[:-1], observed[1:]):
