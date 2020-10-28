@@ -285,7 +285,7 @@ class VAE(torch.nn.Module):
             hidden_cell_state = hidden_cell_state_obs
         
         # Save hidden cell state for multiple predictions
-        saved_hidden_cell_state = hidden_cell_state
+        saved_hidden_cell_state = ([hidden.clone() for hidden in cs] for cs in hidden_cell_state)
 
         ## VAE encoder, latent distribution
         if self.training:
@@ -303,7 +303,7 @@ class VAE(torch.nn.Module):
 
         # Make k predictions
         for k in range(self.num_modes):
-            hidden_cell_state = saved_hidden_cell_state
+            hidden_cell_state = ([hidden.clone() for hidden in cs] for cs in saved_hidden_cell_state)
             if self.training:
                 ## Sampling using "reparametrization trick"
                 # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
