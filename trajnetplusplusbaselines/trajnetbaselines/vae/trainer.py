@@ -32,7 +32,7 @@ class Trainer(object):
     def __init__(self, model=None, criterion='L2', optimizer=None, lr_scheduler=None,
                  device=None, batch_size=32, obs_length=9, pred_length=12, augment=False,
                  normalize_scene=False, save_every=1, start_length=0, obs_dropout=False,
-                 alpha_kld=1, num_modes=1):
+                 alpha_kld=1, num_modes=1, desire_approach=False):
         self.model = model if model is not None else VAE()
         if criterion == 'L2':
             self.criterion = L2Loss()
@@ -44,6 +44,7 @@ class Trainer(object):
         self.kld_loss = KLDLoss()
         self.alpha_kld = alpha_kld
         self.num_modes = num_modes
+        self.desire_approach = desire_approach
         
         self.optimizer = optimizer if optimizer is not None else torch.optim.SGD(
             self.model.parameters(), lr=3e-4, momentum=0.9)
@@ -265,7 +266,7 @@ class Trainer(object):
         prediction_truth = batch_scene[self.obs_length:self.seq_length-1].clone()
         targets = batch_scene[self.obs_length:self.seq_length] - batch_scene[self.obs_length-1:self.seq_length-1]
 
-        rel_outputs, _, z_distribution = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
+        rel_outputs, _, z_distr_xy, z_distr_x = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
 
         ## Loss wrt primary tracks of each scene only
         # Reconstruction loss
@@ -273,7 +274,7 @@ class Trainer(object):
         for rel_outputs_mode in rel_outputs:
             reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
         # KLD loss
-        kld_loss = self.kld_loss(inputs=z_distribution) * self.batch_size
+        kld_loss = self.kld_loss(inputs=z_distr_xy, targets=z_distr_x) * self.batch_size
         
         ## Total loss is the sum of the reconstruction loss and the kld loss
         loss = reconstr_loss + self.alpha_kld * kld_loss
@@ -316,17 +317,17 @@ class Trainer(object):
 
         with torch.no_grad():
             ## groundtruth of neighbours provided (Better validation curve to monitor model)
-            rel_outputs, _, z_distribution = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
+            rel_outputs, _, z_distr_xy, z_distr_x = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
             reconstr_loss = 0
             for rel_outputs_mode in rel_outputs:
                 reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
-            kld_loss = self.kld_loss(inputs=z_distribution) * self.batch_size * self.loss_multiplier
+            kld_loss = self.kld_loss(inputs=z_distr_xy, targets=z_distr_x) * self.batch_size * self.loss_multiplier
             loss = reconstr_loss + self.alpha_kld * kld_loss
             
             ## groundtruth of neighbours not provided 
             self.model.eval()
             loss_test = 0
-            rel_outputs_test, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
+            rel_outputs_test, _, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
             for rel_outputs_mode in rel_outputs_test:
                 loss_test += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
             self.model.train()
@@ -424,6 +425,8 @@ def main(epochs=50):
                         help='Activate debug mode') 
     parser.add_argument('--goal_files', default='goal_files',
                         help='Path for goal files') 
+    parser.add_argument('--desire', action='store_true',
+                        help='Use Desire approach (Trajectron by default)') 
 
     pretrain = parser.add_argument_group('pretraining')
     pretrain.add_argument('--load-state', default=None,
@@ -570,7 +573,8 @@ def main(epochs=50):
                  goal_flag=args.goals,
                  goal_dim=args.goal_dim,
                  num_modes=args.num_modes,
-                 debug_mode=args.debug_mode)
+                 debug_mode=args.debug_mode,
+                 desire_approach=args.desire)
 
     # optimizer and schedular
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -604,7 +608,7 @@ def main(epochs=50):
                       criterion=args.loss, batch_size=args.batch_size, obs_length=args.obs_length,
                       pred_length=args.pred_length, augment=args.augment, normalize_scene=args.normalize_scene,
                       save_every=args.save_every, start_length=args.start_length, obs_dropout=args.obs_dropout,
-                      alpha_kld=args.alpha_kld, num_modes=args.num_modes)
+                      alpha_kld=args.alpha_kld, num_modes=args.num_modes, desire_approach=args.desire)
     trainer.loop(train_scenes, val_scenes, train_goals, val_goals, args.output, epochs=args.epochs, start_epoch=start_epoch)
 
 

@@ -18,7 +18,8 @@ class VAE(torch.nn.Module):
     """
     def __init__(self, embedding_dim=64, hidden_dim=128, \
         latent_dim=128, pool=None, pool_to_input=True, \
-            goal_dim=None, goal_flag=False, num_modes=1, debug_mode = False):
+        goal_dim=None, goal_flag=False, num_modes=1, \
+        debug_mode = False, desire_approach=False):
         """ Initialize the VAE forecasting model
 
         Attributes
@@ -38,12 +39,14 @@ class VAE(torch.nn.Module):
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
-        vae_input_dim = torch.sqrt(torch.Tensor([2*self.hidden_dim])).item() # TODO remove
-        self.vae_input_dims = (int(vae_input_dim), int(vae_input_dim)) #TODO remove
+        #vae_input_dim = torch.sqrt(torch.Tensor([2*self.hidden_dim])).item() # TODO remove
+        #self.vae_input_dims = (int(vae_input_dim), int(vae_input_dim)) #TODO remove
         self.pool = pool
         self.pool_to_input = pool_to_input
         self.num_modes = num_modes
         self.debug_mode = debug_mode
+        self.desire = desire_approach
+        self.trajectron = not desire_approach
 
         ## Location
         scale = 4.0
@@ -66,6 +69,7 @@ class VAE(torch.nn.Module):
 
         ## cVAE
         self.vae_encoder_xy = VAEEncoder(2*self.hidden_dim, 2*self.latent_dim)
+        self.vae_encoder_x = VAEEncoder(self.hidden_dim, 2*self.latent_dim)
         self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
 
         ## LSTM decoder
@@ -76,7 +80,7 @@ class VAE(torch.nn.Module):
         self.hidden2normal_encoder = Hidden2Normal(self.hidden_dim)
         self.hidden2normal_decoder = Hidden2Normal(2*self.hidden_dim)
 
-        assert(vae_input_dim.is_integer())
+        #assert(vae_input_dim.is_integer()) TODO: remove
 
         # Logger
         # # configure logging
@@ -284,24 +288,31 @@ class VAE(torch.nn.Module):
             hidden_cell_state = hidden_cell_state_obs
         
         # Save hidden cell state for multiple predictions
-        saved_hidden_cell_state = ([hidden.clone() for hidden in cs] for cs in hidden_cell_state)
+        saved_hidden_cell_state = ([hidden.clone() for hidden in cs] for cs in hidden_cell_state) # Clone state
 
         ## VAE encoder, latent distribution
+        z_distr_xy = None
         if self.training:
             hidden_state = hidden_cell_state[0]
             z_mu, z_var_log = self.vae_encoder_xy(hidden_state)
-            z_distr = torch.cat((z_mu, z_var_log), dim=1)
-        else: 
-            z_distr = None
+            z_distr_xy = torch.cat((z_mu, z_var_log), dim=1)
+
+        # Compute target latent distribution (depending only on observation)
+        z_distr_x = None
+        z_mu_obs = torch.zeros(num_tracks, self.latent_dim)
+        z_var_log_obs = torch.ones(num_tracks, self.latent_dim)
+        if self.trajectron:
+            z_mu_obs, z_var_log_obs = self.vae_encoder_x(hidden_cell_state_obs[0])
+            z_distr_x = torch.cat((z_mu_obs, z_var_log_obs), dim=1)
 
         # Make k predictions
         for k in range(self.num_modes):
-            hidden_cell_state = ([hidden.clone() for hidden in cs] for cs in saved_hidden_cell_state)
+            hidden_cell_state = ([hidden.clone() for hidden in cs] for cs in saved_hidden_cell_state) # Clone state
             if self.training:
                 ## Sampling using "reparametrization trick"
                 # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
                 epsilon = torch.empty(size=z_mu.size()).normal_(mean=0, std=1)
-                z_val = z_mu + torch.exp(z_var_log/2) * epsilon
+                z_val = z_mu + torch.exp(0.5*z_var_log) * epsilon
                 if self.debug_mode:  # TODO: remove
                     import numpy as np
                     if(np.random.random() > 0.9):
@@ -311,12 +322,10 @@ class VAE(torch.nn.Module):
             
             else: # eval mode
                 # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
-                z_mu = torch.zeros(num_tracks, self.latent_dim)
-                z_var_log = torch.ones(num_tracks, self.latent_dim)
-                z_val = sample_multivariate_distribution(z_mu, z_var_log)
+                z_val = sample_multivariate_distribution(z_mu_obs, z_var_log_obs)
 
             ## VAE decoder
-            x_reconstr = self.vae_decoder(z_val)
+            x_reconstr = self.vae_decoder(z_val) # TODO: change name of x_reconstr
             hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr[i] for i in range(num_tracks)]
             hidden_cell_state = (hidden_cell, hidden_cell_state_obs[1])
             ## decoder, predictions
@@ -345,7 +354,7 @@ class VAE(torch.nn.Module):
         rel_pred_scene = [torch.stack(normals[mode_n], dim=0) for mode_n in normals.keys()]
         pred_scene = [torch.stack(positions[mode_p], dim=0) for mode_p in positions.keys()]
 
-        return rel_pred_scene, pred_scene, z_distr
+        return rel_pred_scene, pred_scene, z_distr_xy, z_distr_x
 
 
 class VAEPredictor(object):
