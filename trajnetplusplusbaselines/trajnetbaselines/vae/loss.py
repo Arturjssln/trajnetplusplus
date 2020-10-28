@@ -41,7 +41,7 @@ class KLDLoss(torch.nn.Module):
             z_var = torch.exp(z_log_var)
             z_var_t = torch.exp(z_log_var_t)
             latent_dim = z_mu.size(1)
-            latent_loss = 0.5 * ((1/z_var_t).sum(dim=1)*z_var.sum(dim=1) + ((z_mu_t-z_mu)**2 * z_var_t).sum(dim=1)\
+            latent_loss = 0.5 * (((1/z_var_t)*z_var).sum(dim=1) + ((z_mu_t-z_mu)**2 * z_var_t).sum(dim=1)\
                 - latent_dim + torch.log(torch.prod(z_var_t, dim=1)/torch.prod(z_var, dim=1)))
         return torch.mean(latent_loss)
     
