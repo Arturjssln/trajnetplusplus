@@ -234,21 +234,21 @@ class VAE(torch.nn.Module):
         # update, the hidden state for every LSTM needs to be a separate object
         # in the backprop graph. Therefore: list of hidden states instead of
         # a single higher rank Tensor.
-        num_tracks = observed.size(1)
+        self.num_tracks = observed.size(1)
         # hidden cell state for observer encoder 
         hidden_cell_state_obs = (
-            [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
-            [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
+            [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(self.num_tracks)],
+            [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(self.num_tracks)],
         )
         # hidden cell state for prediction encoder
         hidden_cell_state_pre = (
-            [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
-            [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(num_tracks)],
+            [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(self.num_tracks)],
+            [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(self.num_tracks)],
         )
 
         ## LSTM-Based Interaction Encoders. Initialze Hidden state
         if self.pool.__class__.__name__ in {'NN_LSTM', 'TrajectronPooling', 'SAttention', 'SAttention_fast'}:
-            self.pool.reset(num_tracks, device=observed.device)
+            self.pool.reset(self.num_tracks, device=observed.device)
 
 
         if len(observed) == 2: # TODO: ask What's the point of this ? 
@@ -277,16 +277,11 @@ class VAE(torch.nn.Module):
         
         ## Prediction encoder
         if self.training:
-            for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
-                # LSTM Step
-                hidden_cell_state_pre, _ = self.step(self.pre_encoder, hidden_cell_state_pre, obs1, obs2, goals, batch_split)
-
-            # Concatenation of hidden states
-            hidden_cell_state = tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
-        
+            hidden_cell_state = self.get_prediction_hidden_state(prediction_truth, goals, batch_split, hidden_cell_state_obs, hidden_cell_state_pre)
         else: # eval mode 
             hidden_cell_state = hidden_cell_state_obs
         
+        # TODO!! VERIFY THAT THIS LINE IS NEEDED !!!!!!!
         # Save hidden cell state for multiple predictions
         saved_hidden_cell_state = ([hidden.clone() for hidden in cs] for cs in hidden_cell_state) # Clone state
 
@@ -299,35 +294,18 @@ class VAE(torch.nn.Module):
 
         # Compute target latent distribution (depending only on observation)
         z_distr_x = None
-        z_mu_obs = torch.zeros(num_tracks, self.latent_dim)
-        z_var_log_obs = torch.ones(num_tracks, self.latent_dim)
+        z_mu_obs = torch.zeros(self.num_tracks, self.latent_dim)
+        z_var_log_obs = torch.ones(self.num_tracks, self.latent_dim)
         if self.trajectron:
             z_mu_obs, z_var_log_obs = self.vae_encoder_x(hidden_cell_state_obs[0])
             z_distr_x = torch.cat((z_mu_obs, z_var_log_obs), dim=1)
 
         # Make k predictions
         for k in range(self.num_modes):
-            hidden_cell_state = ([hidden.clone() for hidden in cs] for cs in saved_hidden_cell_state) # Clone state
-            if self.training:
-                ## Sampling using "reparametrization trick"
-                # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
-                epsilon = torch.empty(size=z_mu.size()).normal_(mean=0, std=1)
-                z_val = z_mu + torch.exp(0.5*z_var_log) * epsilon
-                if self.debug_mode:  # TODO: remove
-                    import numpy as np
-                    if(np.random.random() > 0.9):
-                        self.logger.debug({
-                            "z_val": list(z_val[0].detach().numpy()),
-                        })
-            
-            else: # eval mode
-                # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
-                z_val = sample_multivariate_distribution(z_mu_obs, z_var_log_obs)
+            # TODO!! VERIFY THAT THIS LINE IS NEEDED !!!!!!!
+            hidden_cell_state = tuple([[hidden.clone() for hidden in cs] for cs in saved_hidden_cell_state]) # Clone state
+            hidden_cell_state = self.add_noise(hidden_cell_state, z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs)
 
-            ## VAE decoder
-            x_reconstr = self.vae_decoder(z_val) # TODO: change name of x_reconstr
-            hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr[i] for i in range(num_tracks)]
-            hidden_cell_state = (hidden_cell, hidden_cell_state_obs[1])
             ## decoder, predictions
             for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
                 if obs1 is None:
@@ -355,6 +333,37 @@ class VAE(torch.nn.Module):
         pred_scene = [torch.stack(positions[mode_p], dim=0) for mode_p in positions.keys()]
 
         return rel_pred_scene, pred_scene, z_distr_xy, z_distr_x
+
+
+    def get_prediction_hidden_state(self, prediction_truth, goals, batch_split, hidden_cell_state_obs, hidden_cell_state_pre):
+        for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
+            # LSTM Step
+            hidden_cell_state_pre, _ = self.step(self.pre_encoder, hidden_cell_state_pre, obs1, obs2, goals, batch_split)
+
+        # Concatenation of hidden states
+        return tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
+        
+    def add_noise(self, hidden_cell_state, z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs):
+        if self.training:
+            ## Sampling using "reparametrization trick"
+            # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
+            epsilon = torch.empty(size=z_mu.size()).normal_(mean=0, std=1)
+            z_val = z_mu + torch.exp(0.5*z_var_log) * epsilon
+            if self.debug_mode:  # TODO: remove
+                import numpy as np
+                if(np.random.random() > 0.9):
+                    self.logger.debug({
+                        "z_val": list(z_val[0].detach().numpy()),
+                    })
+        
+        else: # eval mode
+            # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
+            z_val = sample_multivariate_distribution(z_mu_obs, z_var_log_obs)
+
+        ## VAE decoder
+        x_reconstr = self.vae_decoder(z_val) # TODO: change name of x_reconstr
+        hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr[i] for i in range(self.num_tracks)]
+        return (hidden_cell, hidden_cell_state_obs[1])
 
 
 class VAEPredictor(object):
