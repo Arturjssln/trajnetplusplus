@@ -287,6 +287,8 @@ class VAE(torch.nn.Module):
 
         ## VAE encoder, latent distribution
         z_distr_xy = None
+        z_mu = None
+        z_var_log = None
         if self.training:
             hidden_state = hidden_cell_state[0]
             z_mu, z_var_log = self.vae_encoder_xy(hidden_state)
@@ -405,7 +407,7 @@ class VAEPredictor(object):
             batch_split = torch.Tensor(batch_split).long()
 
             # _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, xy[obs_length:-1].clone())
-            _, output_scenes, _ = self.model(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict)
+            _, output_scenes, _, _ = self.model(xy[start_length:obs_length], scene_goal, batch_split, n_predict=n_predict)
 
             multimodal_outputs = {}
             for mode in range(self.model.num_modes):
