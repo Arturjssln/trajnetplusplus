@@ -427,6 +427,8 @@ def main(epochs=50):
                         help='Path for goal files') 
     parser.add_argument('--desire', action='store_true',
                         help='Use Desire approach (Trajectron by default)') 
+    parser.add_argument('--noise', default='default', choices=('default', 'product', 'concat', 'additive'),
+                        help='Inclusion of noise approach (Default for DESIRE: h*z, for Trajectron: [h,z])') 
 
     pretrain = parser.add_argument_group('pretraining')
     pretrain.add_argument('--load-state', default=None,
@@ -573,8 +575,8 @@ def main(epochs=50):
                  goal_flag=args.goals,
                  goal_dim=args.goal_dim,
                  num_modes=args.num_modes,
-                 debug_mode=args.debug_mode,
-                 desire_approach=args.desire)
+                 desire_approach=args.desire,
+                 noise_approach=args.noise)
 
     # optimizer and schedular
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)

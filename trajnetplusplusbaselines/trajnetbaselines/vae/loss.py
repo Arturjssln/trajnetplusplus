@@ -26,8 +26,6 @@ class KLDLoss(torch.nn.Module):
         -----------
         loss : Tensor [1]
             Tensor containing Kullback-Leibler divergence loss
-    
-
         """
 
         if targets is None:
@@ -148,3 +146,42 @@ class L2Loss(torch.nn.Module):
             return loss.mean(dim=0).mean(dim=1)
         
         return torch.mean(loss)
+
+class VarietyLoss(self, inputs, target, batch_split):
+    def __init__(self, criterion, pred_length, loss_multiplier):
+        super(VarietyLoss, self).__init__()
+        self.criterion = criterion
+        self.pred_length = pred_length
+        self.loss_multiplier = loss_multiplier
+
+   
+    def forward(self, inputs, target, batch_split):
+        """ Variety loss calculation as proposed in SGAN
+
+        Parameters
+        ----------
+        inputs : List of length k
+            Each element of the list is Tensor [pred_length, num_tracks, 5]
+            Predicted velocities of pedestrians as multivariate normal
+            i.e. positions relative to previous positions
+        target : Tensor [pred_length, num_tracks, 2]
+            Groundtruth sequence of primary pedestrians of each scene
+        batch_split : Tensor [batch_size + 1]
+            Tensor defining the split of the batch.
+            Required to identify the primary tracks of each scene
+
+        Returns
+        -------
+        loss : Tensor [1,]
+            variety loss
+        """
+
+        iterative_loss = [] 
+        for sample in inputs:
+            sample_loss = self.criterion(sample[-self.pred_length:], target, batch_split) * self.loss_multiplier
+            iterative_loss.append(sample_loss)
+
+        loss = torch.stack(iterative_loss)
+        loss = torch.min(loss, dim=0)[0]
+        loss = torch.sum(loss)
+        return loss

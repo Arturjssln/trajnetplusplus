@@ -19,7 +19,7 @@ class VAE(torch.nn.Module):
     def __init__(self, embedding_dim=64, hidden_dim=128, \
         latent_dim=128, pool=None, pool_to_input=True, \
         goal_dim=None, goal_flag=False, num_modes=1, \
-        debug_mode = False, desire_approach=False):
+        desire_approach=False, noise_approach='default'):
         """ Initialize the VAE forecasting model
 
         Attributes
@@ -39,14 +39,12 @@ class VAE(torch.nn.Module):
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
         self.latent_dim = latent_dim
-        #vae_input_dim = torch.sqrt(torch.Tensor([2*self.hidden_dim])).item() # TODO remove
-        #self.vae_input_dims = (int(vae_input_dim), int(vae_input_dim)) #TODO remove
         self.pool = pool
         self.pool_to_input = pool_to_input
         self.num_modes = num_modes
-        self.debug_mode = debug_mode
         self.desire = desire_approach
         self.trajectron = not desire_approach
+        self.noise_approach = noise_approach
 
         ## Location
         scale = 4.0
@@ -72,6 +70,9 @@ class VAE(torch.nn.Module):
         self.vae_encoder_x = VAEEncoder(self.hidden_dim, 2*self.latent_dim)
         self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
 
+        # Noise layer (used in concatenation noise approach)
+        self.noise_linear = torch.nn.Linear(2*self.hidden_dim, self.hidden_dim)
+
         ## LSTM decoder
         self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
 
@@ -80,7 +81,7 @@ class VAE(torch.nn.Module):
         self.hidden2normal_encoder = Hidden2Normal(self.hidden_dim)
         self.hidden2normal_decoder = Hidden2Normal(2*self.hidden_dim)
 
-        #assert(vae_input_dim.is_integer()) TODO: remove
+
 
         # Logger
         # # configure logging
@@ -281,9 +282,9 @@ class VAE(torch.nn.Module):
         else: # eval mode 
             hidden_cell_state = hidden_cell_state_obs
         
-        # TODO!! VERIFY THAT THIS LINE IS NEEDED !!!!!!!
+        # TODO: remove
         # Save hidden cell state for multiple predictions
-        saved_hidden_cell_state = ([hidden.clone() for hidden in cs] for cs in hidden_cell_state) # Clone state
+        # saved_hidden_cell_state = ([hidden.clone() for hidden in cs] for cs in hidden_cell_state) # Clone state
 
         ## VAE encoder, latent distribution
         z_distr_xy = None
@@ -304,9 +305,7 @@ class VAE(torch.nn.Module):
 
         # Make k predictions
         for k in range(self.num_modes):
-            # TODO!! VERIFY THAT THIS LINE IS NEEDED !!!!!!!
-            hidden_cell_state = tuple([[hidden.clone() for hidden in cs] for cs in saved_hidden_cell_state]) # Clone state
-            hidden_cell_state = self.add_noise(hidden_cell_state, z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs)
+            hidden_cell_state = self.add_noise(z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs)
 
             ## decoder, predictions
             for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
@@ -345,18 +344,12 @@ class VAE(torch.nn.Module):
         # Concatenation of hidden states
         return tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
         
-    def add_noise(self, hidden_cell_state, z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs):
+    def add_noise(self, z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs):
         if self.training:
             ## Sampling using "reparametrization trick"
             # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
             epsilon = torch.empty(size=z_mu.size()).normal_(mean=0, std=1)
             z_val = z_mu + torch.exp(0.5*z_var_log) * epsilon
-            if self.debug_mode:  # TODO: remove
-                import numpy as np
-                if(np.random.random() > 0.9):
-                    self.logger.debug({
-                        "z_val": list(z_val[0].detach().numpy()),
-                    })
         
         else: # eval mode
             # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
@@ -364,7 +357,16 @@ class VAE(torch.nn.Module):
 
         ## VAE decoder
         x_reconstr = self.vae_decoder(z_val) # TODO: change name of x_reconstr
-        hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr[i] for i in range(self.num_tracks)]
+
+        # Add noise in the model depending of the approach
+        if ((self.noise_approach == 'product') or (self.noise_approach == 'default' and self.desire)):
+            hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr[i] for i in range(self.num_tracks)]
+        elif ((self.noise_approach == 'concat') or (self.noise_approach == 'default' and self.trajectron)):
+            hidden_cell = [self.noise_linear(torch.cat(hidden_cell_state_obs[0][i], x_reconstr[i])) for i in range(self.num_tracks)]
+        elif self.noise_approach == 'additive':
+            hidden_cell = [hidden_cell_state_obs[0][i] + x_reconstr[i] for i in range(self.num_tracks)]
+        else:
+            raise NameError
         return (hidden_cell, hidden_cell_state_obs[1])
 
 
