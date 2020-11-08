@@ -80,26 +80,6 @@ class VAE(torch.nn.Module):
         # mu_vel_x, mu_vel_y, sigma_vel_x, sigma_vel_y, rho
         self.hidden2normal_encoder = Hidden2Normal(self.hidden_dim)
         self.hidden2normal_decoder = Hidden2Normal(2*self.hidden_dim)
-
-
-
-        # Logger
-        # # configure logging
-        if self.debug_mode:
-            from pythonjsonlogger import jsonlogger
-            import sys
-            handler = logging.FileHandler('z_val.log')   
-            formatter = logging.Formatter('%(message)s')     
-            handler.setFormatter(formatter)
-
-            self.logger = logging.getLogger('z_val')
-            self.logger.setLevel(logging.DEBUG)
-            self.logger.addHandler(handler)
-            self.logger.debug({
-                'type': 'process',
-                'argv': sys.argv,
-            }) 
-
         
 
     def step(self, lstm, hidden_cell_state, obs1, obs2, goals, batch_split):

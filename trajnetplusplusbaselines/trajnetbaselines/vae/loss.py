@@ -147,7 +147,7 @@ class L2Loss(torch.nn.Module):
         
         return torch.mean(loss)
 
-class VarietyLoss(self, inputs, target, batch_split):
+class VarietyLoss(torch.nn.Module):
     def __init__(self, criterion, pred_length, loss_multiplier):
         super(VarietyLoss, self).__init__()
         self.criterion = criterion

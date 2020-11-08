@@ -421,8 +421,6 @@ def main(epochs=50):
                         help='flag to use goals')
     parser.add_argument('--num_modes', default=1, type=int,
                         help='Number of modes for reconstruction loss') 
-    parser.add_argument('--debug_mode', action='store_true',
-                        help='Activate debug mode') 
     parser.add_argument('--goal_files', default='goal_files',
                         help='Path for goal files') 
     parser.add_argument('--desire', action='store_true',
