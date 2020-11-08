@@ -342,7 +342,7 @@ class VAE(torch.nn.Module):
         if ((self.noise_approach == 'product') or (self.noise_approach == 'default' and self.desire)):
             hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr[i] for i in range(self.num_tracks)]
         elif ((self.noise_approach == 'concat') or (self.noise_approach == 'default' and self.trajectron)):
-            hidden_cell = [self.noise_linear(torch.cat(hidden_cell_state_obs[0][i], x_reconstr[i])) for i in range(self.num_tracks)]
+            hidden_cell = [self.noise_linear(torch.cat([hidden_cell_state_obs[0][i], x_reconstr[i]])) for i in range(self.num_tracks)]
         elif self.noise_approach == 'additive':
             hidden_cell = [hidden_cell_state_obs[0][i] + x_reconstr[i] for i in range(self.num_tracks)]
         else:
