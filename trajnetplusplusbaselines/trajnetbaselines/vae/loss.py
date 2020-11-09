@@ -155,7 +155,7 @@ class VarietyLoss(torch.nn.Module):
         self.loss_multiplier = loss_multiplier
 
    
-    def forward(self, inputs, target, batch_split):
+    def forward(self, inputs, targets, batch_split):
         """ Variety loss calculation as proposed in SGAN
 
         Parameters
@@ -169,7 +169,7 @@ class VarietyLoss(torch.nn.Module):
         batch_split : Tensor [batch_size + 1]
             Tensor defining the split of the batch.
             Required to identify the primary tracks of each scene
-
+        TODO: add following param
         Returns
         -------
         loss : Tensor [1,]
@@ -178,10 +178,46 @@ class VarietyLoss(torch.nn.Module):
 
         iterative_loss = [] 
         for sample in inputs:
-            sample_loss = self.criterion(sample[-self.pred_length:], target, batch_split) * self.loss_multiplier
+            sample_loss = self.criterion(sample[-self.pred_length:], targets, batch_split) * self.loss_multiplier
             iterative_loss.append(sample_loss)
 
         loss = torch.stack(iterative_loss)
         loss = torch.min(loss, dim=0)[0]
         loss = torch.sum(loss)
+        return loss
+
+class ReconstructionLoss(torch.nn.Module):
+    def __init__(self, criterion, pred_length, loss_multiplier, batch_size, num_modes):
+        super(ReconstructionLoss, self).__init__()
+        self.criterion = criterion
+        self.pred_length = pred_length
+        self.loss_multiplier = loss_multiplier
+        self.batch_size = batch_size
+        self.num_modes = num_modes
+   
+    def forward(self, inputs, targets, batch_split):
+        """ Variety loss calculation as proposed in SGAN
+
+        Parameters
+        ----------
+        inputs : List of length k
+            Each element of the list is Tensor [pred_length, num_tracks, 5]
+            Predicted velocities of pedestrians as multivariate normal
+            i.e. positions relative to previous positions
+        target : Tensor [pred_length, num_tracks, 2]
+            Groundtruth sequence of primary pedestrians of each scene
+        batch_split : Tensor [batch_size + 1]
+            Tensor defining the split of the batch.
+            Required to identify the primary tracks of each scene
+        TODO: add following param
+        
+        Returns
+        -------
+        loss : Tensor [1,]
+            recontruction loss
+        """
+
+        loss = 0
+        for sample in inputs:
+            loss += self.criterion(sample[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
         return loss

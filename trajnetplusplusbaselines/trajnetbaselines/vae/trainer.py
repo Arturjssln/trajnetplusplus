@@ -15,7 +15,7 @@ import trajnetplusplustools
 
 from .vae import VAE, VAEPredictor
 from .. import augmentation
-from .loss import PredictionLoss, L2Loss, KLDLoss
+from .loss import PredictionLoss, L2Loss, KLDLoss, ReconstructionLoss, VarietyLoss
 from .utils import drop_distant
 from .pooling.gridbased_pooling import GridBasedPooling
 from .pooling.non_gridbased_pooling import NN_Pooling, HiddenStateMLPPooling, AttentionMLPPooling, DirectionalMLPPooling
@@ -29,10 +29,10 @@ from .utils import center_scene, random_rotation
 
 
 class Trainer(object):
-    def __init__(self, model=None, criterion='L2', optimizer=None, lr_scheduler=None,
-                 device=None, batch_size=32, obs_length=9, pred_length=12, augment=False,
-                 normalize_scene=False, save_every=1, start_length=0, obs_dropout=False,
-                 alpha_kld=1, num_modes=1, desire_approach=False):
+    def __init__(self, model=None, criterion='L2', multimodal_criterion='recon', optimizer=None, 
+                lr_scheduler=None, device=None, batch_size=32, obs_length=9, pred_length=12, 
+                augment=False, normalize_scene=False, save_every=1, start_length=0, 
+                obs_dropout=False, alpha_kld=1, num_modes=1, desire_approach=False):
         self.model = model if model is not None else VAE()
         if criterion == 'L2':
             self.criterion = L2Loss()
@@ -45,7 +45,7 @@ class Trainer(object):
         self.alpha_kld = alpha_kld
         self.num_modes = num_modes
         self.desire_approach = desire_approach
-        
+
         self.optimizer = optimizer if optimizer is not None else torch.optim.SGD(
             self.model.parameters(), lr=3e-4, momentum=0.9)
         self.lr_scheduler = (lr_scheduler
@@ -62,6 +62,12 @@ class Trainer(object):
         self.obs_length = obs_length
         self.pred_length = pred_length
         self.seq_length = self.obs_length+self.pred_length
+
+        if multimodal_criterion == 'variety':
+            self.multimodal_criterion = VarietyLoss(self.criterion, self.pred_length, self.loss_multiplier)
+        else:
+            self.multimodal_criterion = ReconstructionLoss(self.criterion, self.pred_length, self.loss_multiplier, self.batch_size, self.num_modes)
+        
 
         self.augment = augment
         self.normalize_scene = normalize_scene
@@ -269,15 +275,19 @@ class Trainer(object):
         rel_outputs, _, z_distr_xy, z_distr_x = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
 
         ## Loss wrt primary tracks of each scene only
-        # Reconstruction loss
-        reconstr_loss = 0
-        for rel_outputs_mode in rel_outputs:
-            reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
+
+        # Multimodal loss
+        multimodal_loss = self.multimodal_criterion(rel_outputs, targets, batch_split)
+
+        #reconstr_loss = 0
+        #for rel_outputs_mode in rel_outputs:
+        #    reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
+        
         # KLD loss
         kld_loss = self.kld_loss(inputs=z_distr_xy, targets=z_distr_x) * self.batch_size
         
-        ## Total loss is the sum of the reconstruction loss and the kld loss
-        loss = reconstr_loss + self.alpha_kld * kld_loss
+        ## Total loss is the sum of the multimodal loss and the kld loss
+        loss = multimodal_loss + self.alpha_kld * kld_loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -309,29 +319,33 @@ class Trainer(object):
 
         if self.obs_dropout:
             self.start_length = 0
-
         observed = batch_scene[self.start_length:self.obs_length]
         prediction_truth = batch_scene[self.obs_length:self.seq_length-1].clone()  ## CLONE
         targets = batch_scene[self.obs_length:self.seq_length] - batch_scene[self.obs_length-1:self.seq_length-1]
         observed_test = observed.clone()
-
         with torch.no_grad():
             ## groundtruth of neighbours provided (Better validation curve to monitor model)
             rel_outputs, _, z_distr_xy, z_distr_x = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
-            reconstr_loss = 0
-            for rel_outputs_mode in rel_outputs:
-                reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
+            
+            # Multimodal loss
+            multimodal_loss = self.multimodal_criterion(rel_outputs, targets, batch_split)
+
+            #reconstr_loss = 0
+            #for rel_outputs_mode in rel_outputs:
+            #    reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
             kld_loss = self.kld_loss(inputs=z_distr_xy, targets=z_distr_x) * self.batch_size * self.loss_multiplier
-            loss = reconstr_loss + self.alpha_kld * kld_loss
+            loss = multimodal_loss + self.alpha_kld * kld_loss
             
             ## groundtruth of neighbours not provided 
             self.model.eval()
-            loss_test = 0
-            rel_outputs_test, _, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
-            for rel_outputs_mode in rel_outputs_test:
-                loss_test += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
-            self.model.train()
 
+            #loss_test = 0
+            rel_outputs_test, _, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
+            # Multimodal loss
+            loss_test = self.multimodal_criterion(rel_outputs_test, targets, batch_split)
+            #for rel_outputs_mode in rel_outputs_test:
+            #    loss_test += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
+            self.model.train()
         return loss.item(), loss_test.item()
 
 def prepare_data(path, subset='/train/', sample=1.0, goals=True, goal_files='goal_files'):
@@ -417,6 +431,8 @@ def main(epochs=50):
                         help='glob expression for goal files')
     parser.add_argument('--loss', default='L2', choices=('L2', 'pred'),
                         help='loss objective to train the model')
+    parser.add_argument('--multi_loss', default='recon', choices=('recon', 'variety'),
+                        help='multimodal loss objective to train the model')
     parser.add_argument('--goals', action='store_true',
                         help='flag to use goals')
     parser.add_argument('--num_modes', default=1, type=int,
@@ -605,7 +621,7 @@ def main(epochs=50):
 
     #trainer
     trainer = Trainer(model, optimizer=optimizer, lr_scheduler=lr_scheduler, device=args.device,
-                      criterion=args.loss, batch_size=args.batch_size, obs_length=args.obs_length,
+                      criterion=args.loss, multimodal_criterion=args.multi_loss, batch_size=args.batch_size, obs_length=args.obs_length,
                       pred_length=args.pred_length, augment=args.augment, normalize_scene=args.normalize_scene,
                       save_every=args.save_every, start_length=args.start_length, obs_dropout=args.obs_dropout,
                       alpha_kld=args.alpha_kld, num_modes=args.num_modes, desire_approach=args.desire)
