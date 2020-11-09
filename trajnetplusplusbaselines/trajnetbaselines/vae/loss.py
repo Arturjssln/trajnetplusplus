@@ -118,6 +118,35 @@ class PredictionLoss(torch.nn.Module):
         
         return torch.mean(values)
 
+class L1Loss(torch.nn.Module):
+    """L1 Loss 
+
+    This Loss penalizes only the primary trajectories
+    """
+    def __init__(self, keep_batch_dim=False):
+        super(L1Loss, self).__init__()
+        self.loss = torch.nn.L1Loss(reduction='none')
+        self.keep_batch_dim = keep_batch_dim
+
+    def forward(self, inputs, targets, batch_split):
+        ## Extract primary pedestrians
+        # [pred_length, num_tracks, 2] --> [pred_length, batch_size, 2]
+        targets = targets.transpose(0, 1)
+        targets = targets[batch_split[:-1]]
+        targets = targets.transpose(0, 1)
+        # [pred_length, num_tracks, 5] --> [pred_length, batch_size, 5]
+        inputs = inputs.transpose(0, 1)
+        inputs = inputs[batch_split[:-1]]
+        inputs = inputs.transpose(0, 1)
+
+        loss = self.loss(inputs[:, :, :2], targets)
+
+        ## Used in variety loss (SGAN)
+        if self.keep_batch_dim:
+            return loss.mean(dim=0).mean(dim=1)
+        
+        return torch.mean(loss)
+
 class L2Loss(torch.nn.Module):
     """L2 Loss (deterministic version of PredictionLoss)
 
@@ -210,7 +239,7 @@ class ReconstructionLoss(torch.nn.Module):
             Tensor defining the split of the batch.
             Required to identify the primary tracks of each scene
         TODO: add following param
-        
+
         Returns
         -------
         loss : Tensor [1,]

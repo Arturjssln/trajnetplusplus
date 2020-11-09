@@ -15,7 +15,7 @@ import trajnetplusplustools
 
 from .vae import VAE, VAEPredictor
 from .. import augmentation
-from .loss import PredictionLoss, L2Loss, KLDLoss, ReconstructionLoss, VarietyLoss
+from .loss import PredictionLoss, L2Loss, KLDLoss, ReconstructionLoss, VarietyLoss, L1Loss
 from .utils import drop_distant
 from .pooling.gridbased_pooling import GridBasedPooling
 from .pooling.non_gridbased_pooling import NN_Pooling, HiddenStateMLPPooling, AttentionMLPPooling, DirectionalMLPPooling
@@ -37,6 +37,9 @@ class Trainer(object):
         if criterion == 'L2':
             self.criterion = L2Loss()
             self.loss_multiplier = 100
+        elif criterion == 'L1':
+            self.criterion = L1Loss()
+            self.loss_multiplier = 1
         else:
             self.criterion = PredictionLoss()
             self.loss_multiplier = 1
@@ -429,7 +432,7 @@ def main(epochs=50):
                         help='glob expression for data files')
     parser.add_argument('--goal_path', default=None,
                         help='glob expression for goal files')
-    parser.add_argument('--loss', default='L2', choices=('L2', 'pred'),
+    parser.add_argument('--loss', default='L2', choices=('L2', 'gauss', 'L1'),
                         help='loss objective to train the model')
     parser.add_argument('--multi_loss', default='recon', choices=('recon', 'variety'),
                         help='multimodal loss objective to train the model')
