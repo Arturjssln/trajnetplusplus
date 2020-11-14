@@ -596,7 +596,8 @@ def main(epochs=50):
                  goal_dim=args.goal_dim,
                  num_modes=args.num_modes,
                  desire_approach=args.desire,
-                 noise_approach=args.noise)
+                 noise_approach=args.noise,
+                 disentangling_value=args.dis_value)
 
     # optimizer and schedular
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
