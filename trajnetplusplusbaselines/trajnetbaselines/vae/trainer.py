@@ -79,6 +79,7 @@ class Trainer(object):
         self.obs_dropout = obs_dropout
 
     def loop(self, train_scenes, val_scenes, train_goals, val_goals, out, epochs=35, start_epoch=0):
+        epoch = 0
         for epoch in range(start_epoch, start_epoch + epochs):
             if epoch % self.save_every == 0:
                 state = {'epoch': epoch, 'state_dict': self.model.state_dict(),
@@ -163,15 +164,15 @@ class Trainer(object):
                 batch_scene_goal = []
                 batch_split = [0]
 
-            if (scene_i + 1) % (10*self.batch_size) == 0:
-                self.log.info({
-                    'type': 'train',
-                    'epoch': epoch, 'batch': scene_i, 'n_batches': len(scenes),
-                    'time': round(total_time, 3),
-                    'data_time': round(preprocess_time, 3),
-                    'lr': self.get_lr(),
-                    'loss': round(loss, 3),
-                })
+                if (scene_i + 1) % (10*self.batch_size) == 0:
+                    self.log.info({
+                        'type': 'train',
+                        'epoch': epoch, 'batch': scene_i, 'n_batches': len(scenes),
+                        'time': round(total_time, 3),
+                        'data_time': round(preprocess_time, 3),
+                        'lr': self.get_lr(),
+                        'loss': round(loss, 3),
+                    })
 
         self.lr_scheduler.step()
 

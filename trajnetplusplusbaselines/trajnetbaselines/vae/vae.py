@@ -262,10 +262,6 @@ class VAE(torch.nn.Module):
         else: # eval mode 
             hidden_cell_state = hidden_cell_state_obs
         
-        # TODO: remove
-        # Save hidden cell state for multiple predictions
-        # saved_hidden_cell_state = ([hidden.clone() for hidden in cs] for cs in hidden_cell_state) # Clone state
-
         ## VAE encoder, latent distribution
         z_distr_xy = None
         z_mu = None
@@ -381,6 +377,7 @@ class VAEPredictor(object):
             # xy, mask = drop_distant(xy, r=15.0)
             # scene_goal = scene_goal[mask]
 
+            rotation, center = None 
             if args.normalize_scene:
                 xy, rotation, center, scene_goal = center_scene(xy, obs_length, goals=scene_goal)
             
