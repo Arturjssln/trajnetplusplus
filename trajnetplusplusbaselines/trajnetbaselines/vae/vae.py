@@ -19,7 +19,8 @@ class VAE(torch.nn.Module):
     def __init__(self, embedding_dim=64, hidden_dim=128, \
         latent_dim=128, pool=None, pool_to_input=True, \
         goal_dim=None, goal_flag=False, num_modes=1, \
-        desire_approach=False, noise_approach='default'):
+        desire_approach=False, noise_approach='default',\
+        disentangling_value=None):
         """ Initialize the VAE forecasting model
 
         Attributes
@@ -72,6 +73,7 @@ class VAE(torch.nn.Module):
 
         # Noise layer (used in concatenation noise approach)
         self.noise_linear = torch.nn.Linear(2*self.hidden_dim, self.hidden_dim)
+        self.disentangling_value = disentangling_value
 
         ## LSTM decoder
         self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
@@ -281,7 +283,7 @@ class VAE(torch.nn.Module):
 
         # Make k predictions
         for k in range(self.num_modes):
-            hidden_cell_state = self.add_noise(z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs)
+            hidden_cell_state = self.add_noise(z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs, batch_split)
 
             ## decoder, predictions
             for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
@@ -320,7 +322,7 @@ class VAE(torch.nn.Module):
         # Concatenation of hidden states
         return tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
         
-    def add_noise(self, z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs):
+    def add_noise(self, z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs, batch_split):
         if self.training:
             ## Sampling using "reparametrization trick"
             # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
@@ -330,6 +332,10 @@ class VAE(torch.nn.Module):
         else: # eval mode
             # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
             z_val = sample_multivariate_distribution(z_mu_obs, z_var_log_obs)
+            if self.disentangling_value is not None:
+                z_val = z_val.transpose(0, 1)
+                z_val[batch_split[:-1], 0] = self.disentangling_value
+                z_val = z_val.transpose(0, 1)
 
         ## VAE decoder
         x_reconstr = self.vae_decoder(z_val) # TODO: change name of x_reconstr

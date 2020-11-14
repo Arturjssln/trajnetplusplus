@@ -447,7 +447,9 @@ def main(epochs=50):
                         help='Use Desire approach (Trajectron by default)') 
     parser.add_argument('--noise', default='default', choices=('default', 'product', 'concat', 'additive'),
                         help='Inclusion of noise approach (Default for DESIRE: h*z, for Trajectron: [h,z])') 
-
+    parser.add_argument('--dis_value', default=None, type=float,
+                        help='Value by which the first element of the primary in the latent space is replaced') 
+    
     pretrain = parser.add_argument_group('pretraining')
     pretrain.add_argument('--load-state', default=None,
                           help='load a pickled model state dictionary before training')
