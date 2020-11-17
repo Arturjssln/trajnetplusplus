@@ -383,7 +383,7 @@ class VAEPredictor(object):
             # xy, mask = drop_distant(xy, r=15.0)
             # scene_goal = scene_goal[mask]
 
-            rotation, center = None 
+            rotation, center = None , None
             if args.normalize_scene:
                 xy, rotation, center, scene_goal = center_scene(xy, obs_length, goals=scene_goal)
             
