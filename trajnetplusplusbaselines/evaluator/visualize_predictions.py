@@ -50,16 +50,17 @@ def main():
             scenes_pred = reader_list[name].scenes(ids=[scene_id])
             for scene_id, preds in scenes_pred:
                 predicted_paths = [[t for t in pred if t.scene_id == scene_id] for pred in preds]
-            pred_paths[label_dict[name]] = predicted_paths[0]
-            pred_neigh_paths[label_dict[name]] = predicted_paths[1:]
+            primary_multimodal_paths = predicted_paths[0]
+            pred_paths[label_dict[name]] = [t for t in primary_multimodal_paths if t.prediction_number == 0]
+            pred_neigh_paths[label_dict[name]] = [[t for t in primary_multimodal_paths if t.prediction_number == i] for i in range(1, 10)] 
 
         output_filename = None
         if args.output is not None:
             output_filename = '{}.scene{}.png'.format(args.output, scene_id)
-        with show.predicted_paths(paths, pred_paths, output_file=output_filename):
+        # with show.predicted_paths(paths, pred_paths, output_file=output_filename):
+            # pass
+        with show.predicted_paths(paths, pred_paths, pred_neigh_paths):
             pass
-        # with show.predicted_paths(paths, pred_paths, pred_neigh_paths):
-        #     pass
 
 if __name__ == '__main__':
     main()
