@@ -18,6 +18,7 @@ from .. import augmentation
 from .loss import PredictionLoss, L2Loss, KLDLoss, ReconstructionLoss, VarietyLoss, L1Loss
 from .utils import drop_distant
 from .pooling.non_gridbased_pooling import NN_Pooling
+from .pooling.fast_non_gridbased_pooling import NN_Pooling_fast
 
 from .. import __version__ as VERSION
 
@@ -487,14 +488,14 @@ def main(epochs=50):
                                  help='attentionmlp spatial dimension')
     hyperparameters.add_argument('--vel_dim', type=int, default=32,
                                  help='attentionmlp vel dimension')
+    hyperparameters.add_argument('--no_vel', action='store_true',
+                                 help='flag to not consider velocity in nn')
     hyperparameters.add_argument('--pool_constant', default=0, type=int,
                                  help='background value of gridbased pooling')
     hyperparameters.add_argument('--sample', default=1.0, type=float,
                                  help='sample ratio of train/val scenes')
     hyperparameters.add_argument('--norm', default=0, type=int,
                                  help='normalization scheme for grid-based')
-    hyperparameters.add_argument('--no_vel', action='store_true',
-                                 help='flag to not consider velocity in nn')
     hyperparameters.add_argument('--neigh', default=4, type=int,
                                  help='number of neighbours to consider in DirectConcat')
     hyperparameters.add_argument('--mp_iters', default=5, type=int,
@@ -562,7 +563,10 @@ def main(epochs=50):
     # create interaction/pooling modules
     pool = None
     if args.type == 'nn':
-        pool = NN_Pooling(n=args.neigh, out_dim=args.pool_dim, no_vel=args.no_vel)
+        if args.fast_parallel:
+            pool = NN_Pooling_fast(n=args.neigh, out_dim=args.pool_dim)
+        else:
+            pool = NN_Pooling(n=args.neigh, out_dim=args.pool_dim, no_vel=args.no_vel)
   
     # create forecasting model
     model = VAE(pool=pool,
