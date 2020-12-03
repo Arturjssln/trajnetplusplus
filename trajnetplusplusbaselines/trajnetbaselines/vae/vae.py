@@ -9,7 +9,6 @@ from .modules import InputEmbedding, Hidden2Normal
 import trajnetplusplustools
 from ..augmentation import inverse_scene
 from .utils import center_scene, sample_multivariate_distribution
-import logging
 
 NAN = float('nan')
 
@@ -20,7 +19,7 @@ class VAE(torch.nn.Module):
         latent_dim=128, pool=None, pool_to_input=True, \
         goal_dim=None, goal_flag=False, num_modes=1, \
         desire_approach=False, noise_approach='default',\
-        disentangling_value=None):
+        disentangling_value=None, fast_parallel=False):
         """ Initialize the VAE forecasting model
 
         Attributes
@@ -31,7 +30,8 @@ class VAE(torch.nn.Module):
         pool_to_input : Bool
             if True, the interaction vector is concatenated to the input embedding of LSTM [preferred]
             if False, the interaction vector is added to the LSTM hidden-state
-        goal_dim : Embedding dimension of the unit vector pointing towards the goal
+        goal_dim : 
+            Embedding dimension of the unit vector pointing towards the goal
         goal_flag: Bool
             if True, the embedded goal vector is concatenated to the input embedding of LSTM 
         """
@@ -42,6 +42,7 @@ class VAE(torch.nn.Module):
         self.latent_dim = latent_dim
         self.pool = pool
         self.pool_to_input = pool_to_input
+        self.fast_parallel = fast_parallel
         self.num_modes = num_modes
         self.desire = desire_approach
         self.trajectron = not desire_approach
@@ -109,6 +110,8 @@ class VAE(torch.nn.Module):
             with respect to the current position
         """
         num_tracks = len(obs2)
+        batch_size = len(batch_split) - 1
+
         # mask for pedestrians absent from scene (partial trajectories)
         # consider only the hidden states of pedestrains present in scene
         track_mask = (torch.isnan(obs1[:, 0]) + torch.isnan(obs2[:, 0])) == 0
@@ -136,29 +139,29 @@ class VAE(torch.nn.Module):
 
         ## Mask & Pool per scene
         if self.pool is not None:
-            hidden_states_to_pool = torch.stack(hidden_cell_state[0]).clone() # detach?
-            batch_pool = []
-            ## Iterate over scenes
-            for (start, end) in zip(batch_split[:-1], batch_split[1:]):
-                ## Mask for the scene
-                scene_track_mask = track_mask[start:end]
-                ## Get observations and hidden-state for the scene
-                prev_position = obs1[start:end][scene_track_mask]
-                curr_position = obs2[start:end][scene_track_mask]
-                curr_hidden_state = hidden_states_to_pool[start:end][scene_track_mask]
+            # Parallel pooling (faster)
+            if self.fast_parallel:
+                prev_position = obs1.reshape(batch_size, num_tracks // batch_size, 2)
+                curr_position = obs2.reshape(batch_size, num_tracks // batch_size, 2)
+                pooled = self.pool(None, prev_position, curr_position)
+                pooled = pooled.reshape(-1, self.pool.out_dim)
+            # Normal pooling
+            else:
+                hidden_states_to_pool = torch.stack(hidden_cell_state[0]).clone() # detach?
+                batch_pool = []
+                ## Iterate over scenes
+                for (start, end) in zip(batch_split[:-1], batch_split[1:]):
+                    ## Mask for the scene
+                    scene_track_mask = track_mask[start:end]
+                    ## Get observations and hidden-state for the scene
+                    prev_position = obs1[start:end][scene_track_mask]
+                    curr_position = obs2[start:end][scene_track_mask]
+                    curr_hidden_state = hidden_states_to_pool[start:end][scene_track_mask]
 
-                # LSTM-Based Interaction Encoders. Provide track_mask to the interaction encoder LSTMs
-                if self.pool.__class__.__name__ in {'NN_LSTM', 'TrajectronPooling', 'SAttention_fast'}:
-                    ## Everyone absent by default
-                    interaction_track_mask = torch.zeros(num_tracks, device=obs1.device).bool()
-                    ## Only those visible in current scene are present
-                    interaction_track_mask[start:end] = track_mask[start:end]
-                    self.pool.track_mask = interaction_track_mask
+                    pool_sample = self.pool(curr_hidden_state, prev_position, curr_position)
+                    batch_pool.append(pool_sample)
 
-                pool_sample = self.pool(curr_hidden_state, prev_position, curr_position)
-                batch_pool.append(pool_sample)
-
-            pooled = torch.cat(batch_pool)
+                pooled = torch.cat(batch_pool)
             if self.pool_to_input:
                 input_emb = torch.cat([input_emb, pooled], dim=1)
             else:
@@ -229,12 +232,7 @@ class VAE(torch.nn.Module):
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(self.num_tracks)],
         )
 
-        ## LSTM-Based Interaction Encoders. Initialze Hidden state
-        if self.pool.__class__.__name__ in {'NN_LSTM', 'TrajectronPooling', 'SAttention', 'SAttention_fast'}:
-            self.pool.reset(self.num_tracks, device=observed.device)
-
-
-        if len(observed) == 2: # TODO: ask What's the point of this ? 
+        if len(observed) == 2: 
             pos = [observed[-1]]
         else:
             pos = []
@@ -410,67 +408,6 @@ class VAEPredictor(object):
         self.model.train()
         ## Return Dictionary of predictions. Each key corresponds to one mode
         return multimodal_outputs
-
-
-# class VAEEncoder(torch.nn.Module):
-#     """C-VAE Encoder
-
-#     """
-#     def __init__(self, input_dims, output_dim):
-#         super(VAEEncoder, self).__init__()
-#         self.input_dims = input_dims
-#         self.latent_dim = output_dim // 2
-#         if self.input_dims[0] == self.input_dims[1]:
-#             self.conv = torch.nn.Sequential(collections.OrderedDict([
-#             ('conv1', torch.nn.Conv2d(in_channels=1, out_channels=32, kernel_size=5)),
-#             ('conv2', torch.nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=2)),
-#             ('conv3', torch.nn.Conv2d(in_channels=64, out_channels=128, kernel_size=5)),
-#             ]))
-#         else:
-#             self.conv = torch.nn.Sequential(collections.OrderedDict([
-#             ('conv1', torch.nn.Conv2d(in_channels=1, out_channels=32, kernel_size=(5,3))),
-#             ('conv2', torch.nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, stride=(2,1))),
-#             ('conv3', torch.nn.Conv2d(in_channels=64, out_channels=128, kernel_size=(5,4))),
-#             ]))
-#         self.fc_mu = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
-#         self.fc_var = torch.nn.Linear(in_features=128, out_features=self.latent_dim)
-
-#     def forward(self, inputs):
-#         inputs = torch.stack(inputs)
-#         inputs = torch.reshape(inputs, shape=(-1, 1, self.input_dims[0], self.input_dims[1]))
-#         inputs = self.conv(inputs)
-#         inputs = torch.reshape(inputs, shape=(-1, 128))
-#         z_mu = self.fc_mu(inputs)
-#         z_log_var = self.fc_var(inputs)
-        
-#         # Logarithm of the variance
-#         # this allows for smoother representations for the latent space.
-#         return z_mu, z_log_var
-
-
-# class VAEDecoder(torch.nn.Module):
-#     """C-VAE Decoder
-
-#     """
-#     def __init__(self, input_dim, output_dim):
-#         super(VAEDecoder, self).__init__()
-#         self.input_dim = input_dim
-#         self.output_dim = output_dim
-#         self.conv = torch.nn.Sequential(collections.OrderedDict([
-#           ('conv1', torch.nn.ConvTranspose2d(in_channels=self.input_dim, out_channels=64, kernel_size=5)),
-#           ('conv2', torch.nn.ConvTranspose2d(in_channels=64, out_channels=32, kernel_size=4, stride=2)),
-#           ('conv3', torch.nn.ConvTranspose2d(in_channels=32, out_channels=1, kernel_size=5))
-#         ]))
-#         self.fc = torch.nn.Linear(in_features=256, out_features=self.output_dim)
-#         self.relu = torch.nn.ReLU()
-#         self.softmax = torch.nn.Softmax(dim=1)
-
-#     def forward(self, inputs):
-#         inputs = torch.reshape(inputs, shape=(-1, self.input_dim, 1, 1))
-#         inputs = self.conv(inputs)
-#         inputs = torch.reshape(inputs, shape=(-1, 256))
-#         return self.softmax(self.relu(self.fc(inputs)))
-
 
 class VAEEncoder(torch.nn.Module):
     """Project x distribution on latent space TODO : change description

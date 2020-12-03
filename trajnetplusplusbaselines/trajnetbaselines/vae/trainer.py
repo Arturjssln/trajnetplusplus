@@ -17,10 +17,7 @@ from .vae import VAE, VAEPredictor
 from .. import augmentation
 from .loss import PredictionLoss, L2Loss, KLDLoss, ReconstructionLoss, VarietyLoss, L1Loss
 from .utils import drop_distant
-from .pooling.gridbased_pooling import GridBasedPooling
-from .pooling.non_gridbased_pooling import NN_Pooling, HiddenStateMLPPooling, AttentionMLPPooling, DirectionalMLPPooling
-from .pooling.non_gridbased_pooling import NN_LSTM, TrajectronPooling, SAttention_fast
-from .pooling.more_non_gridbased_pooling import NMMP
+from .pooling.non_gridbased_pooling import NN_Pooling
 
 from .. import __version__ as VERSION
 
@@ -449,7 +446,8 @@ def main(epochs=50):
                         help='Inclusion of noise approach (Default for DESIRE: h*z, for Trajectron: [h,z])') 
     parser.add_argument('--dis_value', default=None, type=float,
                         help='Value by which the first element of the primary in the latent space is replaced') 
-    
+    parser.add_argument('--fast_parallel', action='store_true',
+                        help='Use Fast parallel pooling') 
     pretrain = parser.add_argument_group('pretraining')
     pretrain.add_argument('--load-state', default=None,
                           help='load a pickled model state dictionary before training')
@@ -563,31 +561,9 @@ def main(epochs=50):
 
     # create interaction/pooling modules
     pool = None
-    if args.type == 'hiddenstatemlp':
-        pool = HiddenStateMLPPooling(hidden_dim=args.hidden_dim, out_dim=args.pool_dim,
-                                     mlp_dim_vel=args.vel_dim)
-    elif args.type == 'nmmp':
-        pool = NMMP(hidden_dim=args.hidden_dim, out_dim=args.pool_dim, k=args.mp_iters)
-    elif args.type == 'attentionmlp':
-        pool = AttentionMLPPooling(hidden_dim=args.hidden_dim, out_dim=args.pool_dim,
-                                   mlp_dim_spatial=args.spatial_dim, mlp_dim_vel=args.vel_dim)
-    elif args.type == 'directionalmlp':
-        pool = DirectionalMLPPooling(out_dim=args.pool_dim)
-    elif args.type == 'nn':
+    if args.type == 'nn':
         pool = NN_Pooling(n=args.neigh, out_dim=args.pool_dim, no_vel=args.no_vel)
-    elif args.type == 'nn_lstm':
-        pool = NN_LSTM(n=args.neigh, hidden_dim=args.hidden_dim, out_dim=args.pool_dim)
-    elif args.type == 'traj_pool':
-        pool = TrajectronPooling(hidden_dim=args.hidden_dim, out_dim=args.pool_dim)
-    elif args.type == 's_att_fast':
-        pool = SAttention_fast(hidden_dim=args.hidden_dim, out_dim=args.pool_dim)
-    elif args.type != 'vanilla':
-        pool = GridBasedPooling(type_=args.type, hidden_dim=args.hidden_dim,
-                                cell_side=args.cell_side, n=args.n, front=args.front,
-                                out_dim=args.pool_dim, embedding_arch=args.embedding_arch,
-                                constant=args.pool_constant, pretrained_pool_encoder=pretrained_pool,
-                                norm=args.norm, layer_dims=args.layer_dims)
-
+  
     # create forecasting model
     model = VAE(pool=pool,
                  embedding_dim=args.coordinate_embedding_dim,
@@ -597,7 +573,8 @@ def main(epochs=50):
                  num_modes=args.num_modes,
                  desire_approach=args.desire,
                  noise_approach=args.noise,
-                 disentangling_value=args.dis_value)
+                 disentangling_value=args.dis_value,
+                 fast_parallel=args.fast_parallel)
 
     # optimizer and schedular
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -627,6 +604,7 @@ def main(epochs=50):
             start_epoch = checkpoint['epoch']
 
     #trainer
+    training_start_time = time.time()
     trainer = Trainer(model, optimizer=optimizer, lr_scheduler=lr_scheduler, device=args.device,
                       criterion=args.loss, multimodal_criterion=args.multi_loss, batch_size=args.batch_size, obs_length=args.obs_length,
                       pred_length=args.pred_length, augment=args.augment, normalize_scene=args.normalize_scene,
@@ -634,6 +612,11 @@ def main(epochs=50):
                       alpha_kld=args.alpha_kld, num_modes=args.num_modes, desire_approach=args.desire)
     trainer.loop(train_scenes, val_scenes, train_goals, val_goals, args.output, epochs=args.epochs, start_epoch=start_epoch)
 
+    print({
+            'type': 'trainer',
+            'fast_parallel': args.fast_parallel,
+            'total_training_time_min': round((time.time() - training_start_time)/60, 1),
+        })
 
 if __name__ == '__main__':
     main()
