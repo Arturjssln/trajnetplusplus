@@ -70,7 +70,7 @@ class NN_Pooling_fast(torch.nn.Module):
         ## Fixed size embedding. Each neighbour gets equal-sized representation
         ## Currently, n must divide out_dim
         self.embedding = torch.nn.Sequential(
-            torch.nn.Linear(self.input_dim, int(out_dim)),
+            torch.nn.Linear(self.input_dim, int(out_dim/self.num_neighbor)),
             torch.nn.ReLU(),
         )
 
