@@ -311,7 +311,7 @@ class VAE(torch.nn.Module):
         rel_pred_scene = [torch.stack(normals[mode_n], dim=0) for mode_n in normals.keys()]
         pred_scene = [torch.stack(positions[mode_p], dim=0) for mode_p in positions.keys()]
 
-        return rel_pred_scene, pred_scene, z_distr_xy, z_distr_x
+        return rel_pred_scene, pred_scene, z_distr_xy, z_distr_x, hidden_cell_state_obs[0]
 
 
     def get_prediction_hidden_state(self, prediction_truth, goals, batch_split, hidden_cell_state_obs, hidden_cell_state_pre):
@@ -320,6 +320,7 @@ class VAE(torch.nn.Module):
             hidden_cell_state_pre, _ = self.step(self.pre_encoder, hidden_cell_state_pre, obs1, obs2, goals, batch_split)
 
         # Concatenation of hidden states
+        # TODO: make this line more efficient and understandable
         return tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
         
     def add_noise(self, z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs, batch_split):

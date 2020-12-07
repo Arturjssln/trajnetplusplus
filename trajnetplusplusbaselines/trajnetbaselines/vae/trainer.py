@@ -286,20 +286,20 @@ class Trainer(object):
         # Multimodal loss
         multimodal_loss = self.multimodal_criterion(rel_outputs, targets, batch_split)
 
-        # TODO: remove
-        #reconstr_loss = 0
-        #for rel_outputs_mode in rel_outputs:
-        #    reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
-        
         # KLD loss
-        kld_loss = self.kld_loss(inputs=z_distr_xy, targets=z_distr_x) * self.batch_size
+        #kld_loss = self.kld_loss(inputs=z_distr_xy, targets=z_distr_x) * self.batch_size
         
         ## Total loss is the sum of the multimodal loss and the kld loss
-        loss = multimodal_loss + self.alpha_kld * kld_loss
+        #loss = multimodal_loss + self.alpha_kld * kld_loss
+        # self.optimizer.zero_grad()
+        # loss.backward()
+        # self.optimizer.step()
+
+        rel_outputs, outputs, z_distr_xy, z_distr_x = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
+        loss, _ = self.elbo(self, inputs, latents, z_distr_x, multimodal_loss, dataset_size)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-
         return loss.item()
 
     def val_batch(self, batch_scene, batch_scene_goal, batch_split):
@@ -338,10 +338,6 @@ class Trainer(object):
             # Multimodal loss
             multimodal_loss = self.multimodal_criterion(rel_outputs, targets, batch_split)
 
-            # TODO: remove
-            #reconstr_loss = 0
-            #for rel_outputs_mode in rel_outputs:
-            #    reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
             kld_loss = self.kld_loss(inputs=z_distr_xy, targets=z_distr_x) * self.batch_size * self.loss_multiplier
             loss = multimodal_loss + self.alpha_kld * kld_loss
             
@@ -352,11 +348,73 @@ class Trainer(object):
             rel_outputs_test, _, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
             # Multimodal loss
             loss_test = self.multimodal_criterion(rel_outputs_test, targets, batch_split)
-            # TODO: remvoe
-            #for rel_outputs_mode in rel_outputs_test:
-            #    loss_test += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
+
             self.model.train()
         return loss.item(), loss_test.item()
+
+    def elbo(self, inputs, latents, latents_params, elbo, dataset_size):
+        from torch.autograd import Variable
+        from .dist import Bernoulli, Normal
+        self.x_dist = Bernoulli()
+        self.prior_dist = Normal()
+        self.q_dist = Normal()
+        self.z_dim = 128
+        self.beta = 1
+        self.lamb = 1
+        self.register_buffer('prior_params', torch.zeros(self.z_dim, 2))
+
+        batch_size = inputs.size(0)
+        prior_params = Variable(self.prior_params.expand((batch_size,) + self.prior_params.size()))
+
+        logpz = self.prior_dist.log_density(latents, params=prior_params).view(batch_size, -1).sum(1)
+
+        _logqz = self.q_dist.log_density(latents.view(batch_size, 1, self.z_dim), latents_params.view(1, batch_size, self.z_dim, self.q_dist.nparams))
+
+        # minibatch stratified sampling
+        logiw_matrix = Variable(self._log_importance_weight_matrix(batch_size, dataset_size).type_as(_logqz.data))
+        logqz = logsumexp(logiw_matrix + _logqz.sum(2), dim=1, keepdim=False)
+        logqz_prodmarginals = logsumexp(logiw_matrix.view(batch_size, batch_size, 1) + _logqz, dim=1, keepdim=False).sum(1)
+
+        modified_elbo = elbo - self.beta * (logqz - logqz_prodmarginals) - (1 - self.lamb) * (logqz_prodmarginals - logpz)
+
+        return modified_elbo, elbo.detach()
+    
+    def _get_prior_params(self, batch_size=1):
+        from torch.autograd import Variable
+        expanded_size = (batch_size,) + self.prior_params.size()
+        prior_params = Variable(self.prior_params.expand(expanded_size))
+        return prior_params
+
+    def _log_importance_weight_matrix(self, batch_size, dataset_size):
+        N = dataset_size
+        M = batch_size - 1
+        strat_weight = (N - M) / (N * M)
+        W = torch.Tensor(batch_size, batch_size).fill_(1 / M)
+        W.view(-1)[::M+1] = 1 / N
+        W.view(-1)[1::M+1] = strat_weight
+        W[M-1, 0] = strat_weight
+        return W.log()
+
+def logsumexp(value, dim=None, keepdim=False):
+    """Numerically stable implementation of the operation
+    value.exp().sum(dim, keepdim).log()
+    """
+    from numbers import Number
+    import math
+    if dim is not None:
+        m, _ = torch.max(value, dim=dim, keepdim=True)
+        value0 = value - m
+        if keepdim is False:
+            m = m.squeeze(dim)
+        return m + torch.log(torch.sum(torch.exp(value0),
+                                       dim=dim, keepdim=keepdim))
+    else:
+        m = torch.max(value)
+        sum_exp = torch.sum(torch.exp(value - m))
+        if isinstance(sum_exp, Number):
+            return m + math.log(sum_exp)
+        else:
+            return m + torch.log(sum_exp)
 
 def prepare_data(path, subset='/train/', sample=1.0, goals=True, goal_files='goal_files'):
     """ Prepares the train/val scenes and corresponding goals
