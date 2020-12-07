@@ -124,7 +124,8 @@ class VAE(torch.nn.Module):
 
         ## Mask current velocity & embed
         curr_velocity = obs2 - obs1
-        curr_velocity = curr_velocity[track_mask]
+        if not self.fast_parallel:
+            curr_velocity = curr_velocity[track_mask]
         input_emb = self.input_embedding(curr_velocity)
 
         ## Mask Goal direction & embed
@@ -133,7 +134,8 @@ class VAE(torch.nn.Module):
             norm_factors = (torch.norm(obs2 - goals, dim=1))
             goal_direction = (obs2 - goals) / norm_factors.unsqueeze(1)
             goal_direction[norm_factors == 0] = torch.Tensor([0., 0.], device=obs1.device)
-            goal_direction = goal_direction[track_mask]
+            if not self.fast_parallel:
+                goal_direction = goal_direction[track_mask]
             goal_emb = self.goal_embedding(goal_direction)
             input_emb = torch.cat([input_emb, goal_emb], dim=1)
 

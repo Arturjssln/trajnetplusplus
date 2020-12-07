@@ -5,7 +5,7 @@ trajnetplusplusbaselines/trajnetbaselines/vae/playground.py
 trajnetplusplusbaselines/z_val.log
 trajnetplusplusbaselines/DATA_BLOCK/
 trajnetplusplusbaselines/goal_files
-trajnetplusplusbaselines/goal_files.old
+trajnetplusplusbaselines/goal_files*
 trajnetplusplusdataset/interactions
 trajnetplusplusdataset/goal_files
 *.out

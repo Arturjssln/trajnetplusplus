@@ -30,7 +30,8 @@ class Trainer(object):
     def __init__(self, model=None, criterion='L2', multimodal_criterion='recon', optimizer=None, 
                 lr_scheduler=None, device=None, batch_size=32, obs_length=9, pred_length=12, 
                 augment=False, normalize_scene=False, save_every=1, start_length=0, 
-                obs_dropout=False, alpha_kld=1, num_modes=1, desire_approach=False):
+                obs_dropout=False, alpha_kld=1, num_modes=1, desire_approach=False,
+                fast_parallel=False):
         self.model = model if model is not None else VAE()
         if criterion == 'L2':
             self.criterion = L2Loss()
@@ -76,6 +77,8 @@ class Trainer(object):
         self.start_length = start_length
         self.obs_dropout = obs_dropout
 
+        self.fast_parallel = fast_parallel
+
     def loop(self, train_scenes, val_scenes, train_goals, val_goals, out, epochs=35, start_epoch=0):
         epoch = 0
         for epoch in range(start_epoch, start_epoch + epochs):
@@ -83,7 +86,7 @@ class Trainer(object):
                 state = {'epoch': epoch, 'state_dict': self.model.state_dict(),
                          'optimizer': self.optimizer.state_dict(),
                          'scheduler': self.lr_scheduler.state_dict()}
-                VAEPredictor(self.model).save(state, out + '.epoch{}'.format(epoch))
+                VAEPredictor(self.model).save(state, out + f'.epoch{epoch}')
             self.train(train_scenes, train_goals, epoch)
             self.val(val_scenes, val_goals, epoch)
 
@@ -91,7 +94,7 @@ class Trainer(object):
         state = {'epoch': epoch + 1, 'state_dict': self.model.state_dict(),
                  'optimizer': self.optimizer.state_dict(),
                  'scheduler': self.lr_scheduler.state_dict()}
-        VAEPredictor(self.model).save(state, out + '.epoch{}'.format(epoch + 1))
+        VAEPredictor(self.model).save(state, out + f'.epoch{epoch+1}')
         VAEPredictor(self.model).save(state, out)
 
     def get_lr(self):
@@ -125,9 +128,10 @@ class Trainer(object):
             else:
                 scene_goal = np.array([[0, 0] for path in paths])
 
-            ## Drop Distant
-            scene, mask = drop_distant(scene)
-            scene_goal = scene_goal[mask]
+            if not self.fast_parallel:
+                ## Drop Distant
+                scene, mask = drop_distant(scene)
+                scene_goal = scene_goal[mask]
 
             ## Process scene
             if self.normalize_scene:
@@ -203,9 +207,10 @@ class Trainer(object):
             else:
                 scene_goal = np.array([[0, 0] for path in paths])
 
-            ## Drop Distant
-            scene, mask = drop_distant(scene)
-            scene_goal = scene_goal[mask]
+            if not self.fast_parallel:
+                ## Drop Distant
+                scene, mask = drop_distant(scene)
+                scene_goal = scene_goal[mask]
 
             ## Process scene
             if self.normalize_scene:
@@ -281,6 +286,7 @@ class Trainer(object):
         # Multimodal loss
         multimodal_loss = self.multimodal_criterion(rel_outputs, targets, batch_split)
 
+        # TODO: remove
         #reconstr_loss = 0
         #for rel_outputs_mode in rel_outputs:
         #    reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
@@ -332,6 +338,7 @@ class Trainer(object):
             # Multimodal loss
             multimodal_loss = self.multimodal_criterion(rel_outputs, targets, batch_split)
 
+            # TODO: remove
             #reconstr_loss = 0
             #for rel_outputs_mode in rel_outputs:
             #    reconstr_loss += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
@@ -345,6 +352,7 @@ class Trainer(object):
             rel_outputs_test, _, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
             # Multimodal loss
             loss_test = self.multimodal_criterion(rel_outputs_test, targets, batch_split)
+            # TODO: remvoe
             #for rel_outputs_mode in rel_outputs_test:
             #    loss_test += self.criterion(rel_outputs_mode[-self.pred_length:], targets, batch_split) * self.batch_size * self.loss_multiplier / self.num_modes
             self.model.train()
@@ -514,12 +522,11 @@ def main(epochs=50):
         random.seed(1)
 
     ## Define location to save trained model
-    if not os.path.exists('OUTPUT_BLOCK/{}'.format(args.path)):
-        os.makedirs('OUTPUT_BLOCK/{}'.format(args.path))
-    if args.goals:
-        args.output = 'OUTPUT_BLOCK/{}/vae_goals_{}_{}_{}.pkl'.format(args.path, args.type, args.output, args.num_modes)
-    else:
-        args.output = 'OUTPUT_BLOCK/{}/vae_{}_{}_{}.pkl'.format(args.path, args.type, args.output, args.num_modes)
+    if not os.path.exists(f'OUTPUT_BLOCK/{args.path}'):
+        os.makedirs(f'OUTPUT_BLOCK/{args.path}')
+    goals = '_goals' if args.goals else ''
+    fast_paralell = '_parallel' if args.fast_parallel else ''
+    args.output = f'OUTPUT_BLOCK/{args.path}/vae{fast_paralell}{goals}_{args.type}_{args.output}_{args.num_modes}.pkl'
 
     # configure logging
     from pythonjsonlogger import jsonlogger
@@ -613,7 +620,8 @@ def main(epochs=50):
                       criterion=args.loss, multimodal_criterion=args.multi_loss, batch_size=args.batch_size, obs_length=args.obs_length,
                       pred_length=args.pred_length, augment=args.augment, normalize_scene=args.normalize_scene,
                       save_every=args.save_every, start_length=args.start_length, obs_dropout=args.obs_dropout,
-                      alpha_kld=args.alpha_kld, num_modes=args.num_modes, desire_approach=args.desire)
+                      alpha_kld=args.alpha_kld, num_modes=args.num_modes, desire_approach=args.desire,
+                      fast_parallel=args.fast_parallel)
     trainer.loop(train_scenes, val_scenes, train_goals, val_goals, args.output, epochs=args.epochs, start_epoch=start_epoch)
 
     print({
