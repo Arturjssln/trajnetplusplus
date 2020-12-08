@@ -103,6 +103,7 @@ class Trainer(object):
 
     def train(self, scenes, goals, epoch):
         start_time = time.time()
+        self.dataset_size = scenes.size(0)
 
         print('epoch', epoch)
 
@@ -115,7 +116,7 @@ class Trainer(object):
         batch_scene = []
         batch_scene_goal = []
         batch_split = [0]
-
+    
         for scene_i, (filename, scene_id, paths) in enumerate(scenes):
             scene_start = time.time()
 
@@ -279,8 +280,9 @@ class Trainer(object):
         prediction_truth = batch_scene[self.obs_length:self.seq_length-1].clone()
         targets = batch_scene[self.obs_length:self.seq_length] - batch_scene[self.obs_length-1:self.seq_length-1]
 
-        rel_outputs, _, z_distr_xy, z_distr_x = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
-
+        rel_outputs, _, _, z_distr_x, latents = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
+        #TODO: need to take into account that latents is a dictionary at the moment
+        
         ## Loss wrt primary tracks of each scene only
 
         # Multimodal loss
@@ -295,8 +297,7 @@ class Trainer(object):
         # loss.backward()
         # self.optimizer.step()
 
-        rel_outputs, outputs, z_distr_xy, z_distr_x = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
-        loss, _ = self.elbo(self, inputs, latents, z_distr_x, multimodal_loss, dataset_size)
+        loss, _ = self.elbo(observed, latents, z_distr_x, multimodal_loss, self.dataset_size)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -333,7 +334,7 @@ class Trainer(object):
         observed_test = observed.clone()
         with torch.no_grad():
             ## groundtruth of neighbours provided (Better validation curve to monitor model)
-            rel_outputs, _, z_distr_xy, z_distr_x = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
+            rel_outputs, _, z_distr_xy, z_distr_x, _ = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
             
             # Multimodal loss
             multimodal_loss = self.multimodal_criterion(rel_outputs, targets, batch_split)
@@ -345,7 +346,7 @@ class Trainer(object):
             self.model.eval()
 
             #loss_test = 0
-            rel_outputs_test, _, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
+            rel_outputs_test, _, _, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
             # Multimodal loss
             loss_test = self.multimodal_criterion(rel_outputs_test, targets, batch_split)
 
@@ -354,21 +355,21 @@ class Trainer(object):
 
     def elbo(self, inputs, latents, latents_params, elbo, dataset_size):
         from torch.autograd import Variable
-        from .dist import Bernoulli, Normal
-        self.x_dist = Bernoulli()
+        from .dist import Normal
         self.prior_dist = Normal()
         self.q_dist = Normal()
-        self.z_dim = 128
+        z_dim = latents_params.size(-1)//2
+        batch_size = inputs.size(0)
         self.beta = 1
         self.lamb = 1
-        self.register_buffer('prior_params', torch.zeros(self.z_dim, 2))
+        self.register_buffer('prior_params', torch.zeros(2*z_dim))
 
-        batch_size = inputs.size(0)
         prior_params = Variable(self.prior_params.expand((batch_size,) + self.prior_params.size()))
 
         logpz = self.prior_dist.log_density(latents, params=prior_params).view(batch_size, -1).sum(1)
 
-        _logqz = self.q_dist.log_density(latents.view(batch_size, 1, self.z_dim), latents_params.view(1, batch_size, self.z_dim, self.q_dist.nparams))
+        _logqz = self.q_dist.log_density(latents.view(batch_size, 1, z_dim), 
+                        params=latents_params.view(1, batch_size, z_dim, self.q_dist.nparams))
 
         # minibatch stratified sampling
         logiw_matrix = Variable(self._log_importance_weight_matrix(batch_size, dataset_size).type_as(_logqz.data))

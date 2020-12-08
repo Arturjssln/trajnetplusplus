@@ -30,41 +30,23 @@ class Normal(nn.Module):
         self.mu = Variable(torch.Tensor([mu]))
         self.logsigma = Variable(torch.Tensor([math.log(sigma)]))
 
-    def _check_inputs(self, size, mu_logsigma):
-        if size is None and mu_logsigma is None:
-            raise ValueError(
-                'Either one of size or params should be provided.')
-        elif size is not None and mu_logsigma is not None:
-            mu = mu_logsigma.select(-1, 0).expand(size)
-            logsigma = mu_logsigma.select(-1, 1).expand(size)
-            return mu, logsigma
-        elif size is not None:
-            mu = self.mu.expand(size)
-            logsigma = self.logsigma.expand(size)
-            return mu, logsigma
-        elif mu_logsigma is not None:
-            mu = mu_logsigma.select(-1, 0)
-            logsigma = mu_logsigma.select(-1, 1)
+    def _check_inputs(self, mu_logsigma):
+        if mu_logsigma is not None:
+            latent_size = mu_logsigma.size(dim=-1)//2
+            mu = mu_logsigma[..., :latent_size]
+            logsigma = mu_logsigma[..., latent_size:]
             return mu, logsigma
         else:
-            raise ValueError(
-                'Given invalid inputs: size={}, mu_logsigma={})'.format(
-                    size, mu_logsigma))
+            raise ValueError('mu_logsigma should be provided.')
 
-    def sample(self, size=None, params=None):
-        mu, logsigma = self._check_inputs(size, params)
+    def sample(self, params):
+        mu, logsigma = self._check_inputs(params)
         std_z = Variable(torch.randn(mu.size()).type_as(mu.data))
         sample = std_z * torch.exp(logsigma) + mu
         return sample
 
-    def log_density(self, sample, params=None):
-        if params is not None:
-            mu, logsigma = self._check_inputs(None, params)
-        else:
-            mu, logsigma = self._check_inputs(sample.size(), None)
-            mu = mu.type_as(sample)
-            logsigma = logsigma.type_as(sample)
-
+    def log_density(self, sample, params):
+        mu, logsigma = self._check_inputs(params)
         c = self.normalization.type_as(sample.data)
         inv_sigma = torch.exp(-logsigma)
         tmp = (sample - mu) * inv_sigma
@@ -75,9 +57,9 @@ class Normal(nn.Module):
             E_N(mu_2,sigma_2^2) [ - log N(mu_1, sigma_1^2) ]
         If mu_2, and sigma_2^2 are not provided, defaults to entropy.
         """
-        mu, logsigma = self._check_inputs(None, params)
+        mu, logsigma = self._check_inputs(params)
         if sample_params is not None:
-            sample_mu, sample_logsigma = self._check_inputs(None, sample_params)
+            sample_mu, sample_logsigma = self._check_inputs(sample_params)
         else:
             sample_mu, sample_logsigma = mu, logsigma
 
@@ -90,7 +72,7 @@ class Normal(nn.Module):
         """Computes KL(q||p) where q is the given distribution and p
         is the standard Normal distribution.
         """
-        mu, logsigma = self._check_inputs(None, params)
+        mu, logsigma = self._check_inputs(params)
         # see Appendix B from VAE paper:
         # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
         # https://arxiv.org/abs/1312.6114

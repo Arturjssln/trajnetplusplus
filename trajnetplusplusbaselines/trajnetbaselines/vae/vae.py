@@ -281,9 +281,14 @@ class VAE(torch.nn.Module):
             z_mu_obs, z_var_log_obs = self.vae_encoder_x(hidden_cell_state_obs[0])
             z_distr_x = torch.cat((z_mu_obs, z_var_log_obs), dim=1)
 
+        # Used for final loss
+        z_vals = {}
         # Make k predictions
         for k in range(self.num_modes):
-            hidden_cell_state = self.add_noise(z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs, batch_split)
+            hidden_cell_state, z_val = self.add_noise(z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs, batch_split)
+
+            # Keep track of latent samples for final loss
+            z_vals[k] = z_val
 
             ## decoder, predictions
             for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
@@ -311,7 +316,7 @@ class VAE(torch.nn.Module):
         rel_pred_scene = [torch.stack(normals[mode_n], dim=0) for mode_n in normals.keys()]
         pred_scene = [torch.stack(positions[mode_p], dim=0) for mode_p in positions.keys()]
 
-        return rel_pred_scene, pred_scene, z_distr_xy, z_distr_x, hidden_cell_state_obs[0]
+        return rel_pred_scene, pred_scene, z_distr_xy, z_distr_x, z_vals
 
 
     def get_prediction_hidden_state(self, prediction_truth, goals, batch_split, hidden_cell_state_obs, hidden_cell_state_pre):
@@ -350,7 +355,7 @@ class VAE(torch.nn.Module):
             hidden_cell = [hidden_cell_state_obs[0][i] + x_reconstr[i] for i in range(self.num_tracks)]
         else:
             raise NameError
-        return (hidden_cell, hidden_cell_state_obs[1])
+        return (hidden_cell, hidden_cell_state_obs[1]), z_val
 
 
 class VAEPredictor(object):
