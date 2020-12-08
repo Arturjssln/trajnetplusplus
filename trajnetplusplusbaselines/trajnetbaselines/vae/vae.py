@@ -320,6 +320,7 @@ class VAE(torch.nn.Module):
             hidden_cell_state_pre, _ = self.step(self.pre_encoder, hidden_cell_state_pre, obs1, obs2, goals, batch_split)
 
         # Concatenation of hidden states
+        # TODO: make this line more readable
         return tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
         
     def add_noise(self, z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs, batch_split):
