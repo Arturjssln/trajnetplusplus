@@ -9,6 +9,7 @@ from .modules import InputEmbedding, Hidden2Normal
 import trajnetplusplustools
 from ..augmentation import inverse_scene
 from .utils import center_scene, sample_multivariate_distribution
+from .flows.flow import *
 
 NAN = float('nan')
 
@@ -71,6 +72,9 @@ class CFVAE(torch.nn.Module):
         self.vae_encoder_xy = VAEEncoder(2*self.hidden_dim, 2*self.latent_dim)
         self.vae_encoder_x = VAEEncoder(self.hidden_dim, 2*self.latent_dim)
         self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
+
+        # Non-Linear Squared Flow 
+        self.flow_net = FlowNet(nb_layers=10, latent_size=self.latent_dim)
 
         # Noise layer (used in concatenation noise approach)
         self.noise_linear = torch.nn.Linear(2*self.hidden_dim, self.hidden_dim)
@@ -288,7 +292,7 @@ class CFVAE(torch.nn.Module):
             hidden_cell_state, z_val = self.add_noise(z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs, batch_split)
 
             # Pass though conditional nonlinear normalizing flows
-            z_val = nonlinear_normalizing_flow(z_val, hidden_cell_state_obs[0])
+            z_val = self.nonlinear_normalizing_flow(z_val, hidden_cell_state_obs[0])
 
             # Keep track of latent samples for final loss
             z_vals[k] = z_val
@@ -360,12 +364,12 @@ class CFVAE(torch.nn.Module):
             raise NameError
         return (hidden_cell, hidden_cell_state_obs[1]), z_val
 
-    def nonlinear_normalizing_flow(z, x):
-        z_L, z_R = torch.split(z, z.size(-1)//2, dim=-1)
+    def nonlinear_normalizing_flow(self, z, x):
+        nn_outp = None # TODO: f(z,x)
+        z = self.flow_net(z, nn_outp)
+        z = self.flow_net(z, nn_outp, reverse=True)
+        return z
 
-        ## TODO: implement nonlinear_normalizing_flow
-
-        return torch.cat((z_L, z_R), dim=-1)
 
 class VAEPredictor(object):
     def __init__(self, model):
