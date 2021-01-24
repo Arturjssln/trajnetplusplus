@@ -14,13 +14,14 @@ from .flows.flow import *
 NAN = float('nan')
 
 class CFVAE(torch.nn.Module):
-    """CFVAE forecasting model
+    """
+    CFVAE forecasting model
     """
     def __init__(self, embedding_dim=64, hidden_dim=128, \
         latent_dim=128, pool=None, pool_to_input=True, \
         goal_dim=None, goal_flag=False, num_modes=1, \
         desire_approach=False, noise_approach='default',\
-        disentangling_value=None, fast_parallel=False):
+        disentangling_value=None, fast_parallel=False, flows=True):
         """ Initialize the CFVAE forecasting model
 
         Attributes
@@ -70,11 +71,15 @@ class CFVAE(torch.nn.Module):
 
         ## cVAE
         self.vae_encoder_xy = VAEEncoder(2*self.hidden_dim, 2*self.latent_dim)
-        self.vae_encoder_x = VAEEncoder(self.hidden_dim, 2*self.latent_dim)
+        #self.vae_encoder_x = VAEEncoder(self.hidden_dim, 2*self.latent_dim)
         self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
 
-        # Non-Linear Squared Flow 
-        self.flow_net = FlowNet(nb_layers=10, latent_size=self.latent_dim)
+        # Non-Linear Squared Flow
+        self.flows = flows
+        self.coupling = Split2dMsC()
+        self.nb_layers = 10 # TODO: include this as parameter
+        self.input_to_flow = nn.Linear(self.hidden_dim+self.latent_dim//2, self.nb_layers * 5) # 5 = number of parameters of the Non-Linear Squared Flow
+        self.flow_net = FlowNet(nb_layers=self.nb_layers, latent_size=self.latent_dim)
 
         # Noise layer (used in concatenation noise approach)
         self.noise_linear = torch.nn.Linear(2*self.hidden_dim, self.hidden_dim)
@@ -238,11 +243,6 @@ class CFVAE(torch.nn.Module):
             [torch.zeros(self.hidden_dim, device=observed.device) for _ in range(self.num_tracks)],
         )
 
-        if len(observed) == 2: 
-            pos = [observed[-1]]
-        else:
-            pos = []
-
         # list of predictions store a dictionary. Each key corresponds to one mode
         normals = {mode: [] for mode in range(self.num_modes)} # predicted normal parameters for both phases
         positions = {mode: [] for mode in range(self.num_modes)} # true (during obs phase) and predicted positions
@@ -278,24 +278,27 @@ class CFVAE(torch.nn.Module):
             z_distr_xy = torch.cat((z_mu, z_var_log), dim=1)
 
         # Compute target latent distribution (depending only on observation)
-        z_distr_x = None
-        z_mu_obs = torch.zeros(self.num_tracks, self.latent_dim)
-        z_var_log_obs = torch.ones(self.num_tracks, self.latent_dim)
-        if self.trajectron:
-            z_mu_obs, z_var_log_obs = self.vae_encoder_x(hidden_cell_state_obs[0])
-            z_distr_x = torch.cat((z_mu_obs, z_var_log_obs), dim=1)
+        # z_distr_x = None
+        # z_mu_obs = torch.zeros(self.num_tracks, self.latent_dim)
+        # z_var_log_obs = torch.ones(self.num_tracks, self.latent_dim)
+        # if self.trajectron:
+        #     z_mu_obs, z_var_log_obs = self.vae_encoder_x(hidden_cell_state_obs[0])
+        #     z_distr_x = torch.cat((z_mu_obs, z_var_log_obs), dim=1)
 
         # Used for final loss
-        z_vals = {}
+        nlls = []
+
         # Make k predictions
         for k in range(self.num_modes):
-            hidden_cell_state, z_val = self.add_noise(z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs, batch_split)
+            hidden_cell_state, z_val = self.add_noise(z_mu, z_var_log, hidden_cell_state_obs, batch_split)
 
             # Pass though conditional nonlinear normalizing flows
-            z_val = self.nonlinear_normalizing_flow(z_val, hidden_cell_state_obs[0])
-
-            # Keep track of latent samples for final loss
-            z_vals[k] = z_val
+            #z_before = z_val.clone()
+            if self.flows:
+                z_val, logdet = self.nonlinear_normalizing_flow(z_val, torch.stack(hidden_cell_state_obs[0]).detach())
+                #print("Total diff: ", torch.sum(z_val - z_before).item())
+                # Keep track of nlls for final loss
+                nlls.append(-logdet)
 
             ## decoder, predictions
             for obs1, obs2 in zip(prediction_truth[:-1], prediction_truth[1:]):
@@ -323,7 +326,7 @@ class CFVAE(torch.nn.Module):
         rel_pred_scene = [torch.stack(normals[mode_n], dim=0) for mode_n in normals.keys()]
         pred_scene = [torch.stack(positions[mode_p], dim=0) for mode_p in positions.keys()]
 
-        return rel_pred_scene, pred_scene, z_distr_xy, z_distr_x, z_vals
+        return rel_pred_scene, pred_scene, z_distr_xy, nlls
 
 
     def get_prediction_hidden_state(self, prediction_truth, goals, batch_split, hidden_cell_state_obs, hidden_cell_state_pre):
@@ -335,7 +338,7 @@ class CFVAE(torch.nn.Module):
         # TODO: make this line more efficient and understandable
         return tuple([[torch.cat((track_obs, track_pre), dim=0) for track_obs, track_pre in zip(obs, pre)] for obs, pre in zip(hidden_cell_state_obs, hidden_cell_state_pre)])
         
-    def add_noise(self, z_mu, z_var_log, z_mu_obs, z_var_log_obs, hidden_cell_state_obs, batch_split):
+    def add_noise(self, z_mu, z_var_log, hidden_cell_state_obs, batch_split):
         if self.training:
             ## Sampling using "reparametrization trick"
             # See Kingma & Wellig, Auto-Encoding Variational Bayes, 2014 (arXiv:1312.6114)
@@ -344,14 +347,10 @@ class CFVAE(torch.nn.Module):
         
         else: # eval mode
             # Draw a sample from the learned multivariate distribution (z_mu, z_var_log)
-            z_val = sample_multivariate_distribution(z_mu_obs, z_var_log_obs)
-            if self.disentangling_value is not None:
-                z_val = z_val.transpose(0, 1)
-                z_val[batch_split[:-1], 0] = self.disentangling_value
-                z_val = z_val.transpose(0, 1)
+            z_val = sample_multivariate_distribution(torch.zeros(self.num_tracks, self.latent_dim), torch.ones(self.num_tracks, self.latent_dim))
 
         ## VAE decoder
-        x_reconstr = self.vae_decoder(z_val) # TODO: change name of x_reconstr
+        x_reconstr = self.vae_decoder(z_val) 
 
         # Add noise in the model depending of the approach
         if ((self.noise_approach == 'product') or (self.noise_approach == 'default' and self.desire)):
@@ -365,10 +364,22 @@ class CFVAE(torch.nn.Module):
         return (hidden_cell, hidden_cell_state_obs[1]), z_val
 
     def nonlinear_normalizing_flow(self, z, x):
-        nn_outp = None # TODO: f(z,x)
-        z = self.flow_net(z, nn_outp)
-        z = self.flow_net(z, nn_outp, reverse=True)
-        return z
+        batch_size = z.size(0)
+        # Split coupling
+        (zL, zR), _ = self.coupling(z)
+        # Compute coefficients
+        input_xz = torch.cat((x.view(batch_size, -1), zR), dim=1)
+        flow_coefs = self.input_to_flow(input_xz).reshape(-1, self.nb_layers, 5)
+
+        # Non Linear Normalizing Flow (encoding + decoding)
+        zL = zL.transpose(0, 1)
+        epsilon, logdet_enc = self.flow_net(input=(zL, flow_coefs))
+        zL, logdet_dec = self.flow_net(input=(epsilon, flow_coefs), reverse=True)
+        logdet = logdet_enc + logdet_dec
+        zL = zL.transpose(0, 1)
+        # Merging of splitted values
+        z, logdet = self.coupling((zL, zR), logdet, reverse=True)
+        return z, logdet
 
 
 class VAEPredictor(object):

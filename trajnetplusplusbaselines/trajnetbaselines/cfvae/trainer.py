@@ -30,7 +30,7 @@ class Trainer(object):
     def __init__(self, model=None, criterion='L2', multimodal_criterion='recon', optimizer=None, 
                 lr_scheduler=None, device=None, batch_size=32, obs_length=9, pred_length=12, 
                 augment=False, normalize_scene=False, save_every=1, start_length=0, 
-                obs_dropout=False, alpha_kld=1, num_modes=1, desire_approach=False,
+                obs_dropout=False, beta=1, gamma=1, num_modes=1, desire_approach=False,
                 fast_parallel=False):
         self.model = model if model is not None else CFVAE()
         if criterion == 'L2':
@@ -44,15 +44,16 @@ class Trainer(object):
             self.loss_multiplier = 1
         
         self.kld_loss = KLDLoss()
-        self.alpha_kld = alpha_kld
+        self.beta = beta 
+        self.gamma = gamma
         self.num_modes = num_modes
         self.desire_approach = desire_approach
 
         self.optimizer = optimizer if optimizer is not None else torch.optim.SGD(
             self.model.parameters(), lr=3e-4, momentum=0.9)
         self.lr_scheduler = (lr_scheduler
-                             if lr_scheduler is not None
-                             else torch.optim.lr_scheduler.StepLR(self.optimizer, 15))
+                            if lr_scheduler is not None
+                            else torch.optim.lr_scheduler.StepLR(self.optimizer, 15))
 
         self.device = device if device is not None else torch.device('cpu')
         self.model = self.model.to(self.device)
@@ -103,7 +104,6 @@ class Trainer(object):
 
     def train(self, scenes, goals, epoch):
         start_time = time.time()
-        self.dataset_size = scenes.size(0)
 
         print('epoch', epoch)
 
@@ -116,7 +116,7 @@ class Trainer(object):
         batch_scene = []
         batch_scene_goal = []
         batch_split = [0]
-    
+
         for scene_i, (filename, scene_id, paths) in enumerate(scenes):
             scene_start = time.time()
 
@@ -280,27 +280,22 @@ class Trainer(object):
         prediction_truth = batch_scene[self.obs_length:self.seq_length-1].clone()
         targets = batch_scene[self.obs_length:self.seq_length] - batch_scene[self.obs_length-1:self.seq_length-1]
 
-        rel_outputs, _, _, z_distr_x, latents = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
-        #TODO: need to take into account that latents is a dictionary at the moment
-        
-        ## Loss wrt primary tracks of each scene only
+        rel_outputs, _, z_distr_xy, nlls = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
 
         # Multimodal loss
         multimodal_loss = self.multimodal_criterion(rel_outputs, targets, batch_split)
 
+        flow_loss = self.flow_loss(nlls)
+
         # KLD loss
-        #kld_loss = self.kld_loss(inputs=z_distr_xy, targets=z_distr_x) * self.batch_size
+        kld_loss = self.kld_loss(inputs=z_distr_xy) * self.batch_size
         
         ## Total loss is the sum of the multimodal loss and the kld loss
-        #loss = multimodal_loss + self.alpha_kld * kld_loss
-        # self.optimizer.zero_grad()
-        # loss.backward()
-        # self.optimizer.step()
-
-        loss, _ = self.elbo(observed, latents, z_distr_x, multimodal_loss, self.dataset_size)
+        loss = multimodal_loss + self.beta * kld_loss + self.gamma * flow_loss # TODO: flow loss here ??????
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
+
         return loss.item()
 
     def val_batch(self, batch_scene, batch_scene_goal, batch_split):
@@ -334,88 +329,30 @@ class Trainer(object):
         observed_test = observed.clone()
         with torch.no_grad():
             ## groundtruth of neighbours provided (Better validation curve to monitor model)
-            rel_outputs, _, z_distr_xy, z_distr_x, _ = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
+            rel_outputs, _, z_distr_xy, nlls = self.model(observed, batch_scene_goal, batch_split, prediction_truth)
             
             # Multimodal loss
             multimodal_loss = self.multimodal_criterion(rel_outputs, targets, batch_split)
 
-            kld_loss = self.kld_loss(inputs=z_distr_xy, targets=z_distr_x) * self.batch_size * self.loss_multiplier
-            loss = multimodal_loss + self.alpha_kld * kld_loss
+            flow_loss = self.flow_loss(nlls)
+
+            kld_loss = self.kld_loss(inputs=z_distr_xy) * self.batch_size * self.loss_multiplier
+            loss = multimodal_loss + self.beta * kld_loss + self.gamma * flow_loss # TODO: flow loss here ??????
             
             ## groundtruth of neighbours not provided 
             self.model.eval()
 
-            #loss_test = 0
-            rel_outputs_test, _, _, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
+            rel_outputs_test, _, _, _, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
             # Multimodal loss
             loss_test = self.multimodal_criterion(rel_outputs_test, targets, batch_split)
 
             self.model.train()
         return loss.item(), loss_test.item()
 
-    def elbo(self, inputs, latents, latents_params, elbo, dataset_size):
-        from torch.autograd import Variable
-        from .dist import Normal
-        self.prior_dist = Normal()
-        self.q_dist = Normal()
-        z_dim = latents_params.size(-1)//2
-        batch_size = inputs.size(0)
-        self.beta = 1
-        self.lamb = 1
-        self.register_buffer('prior_params', torch.zeros(2*z_dim))
 
-        prior_params = Variable(self.prior_params.expand((batch_size,) + self.prior_params.size()))
-
-        logpz = self.prior_dist.log_density(latents, params=prior_params).view(batch_size, -1).sum(1)
-
-        _logqz = self.q_dist.log_density(latents.view(batch_size, 1, z_dim), 
-                        params=latents_params.view(1, batch_size, z_dim, self.q_dist.nparams))
-
-        # minibatch stratified sampling
-        logiw_matrix = Variable(self._log_importance_weight_matrix(batch_size, dataset_size).type_as(_logqz.data))
-        logqz = logsumexp(logiw_matrix + _logqz.sum(2), dim=1, keepdim=False)
-        logqz_prodmarginals = logsumexp(logiw_matrix.view(batch_size, batch_size, 1) + _logqz, dim=1, keepdim=False).sum(1)
-
-        modified_elbo = elbo - self.beta * (logqz - logqz_prodmarginals) - (1 - self.lamb) * (logqz_prodmarginals - logpz)
-
-        return modified_elbo, elbo.detach()
-    
-    def _get_prior_params(self, batch_size=1):
-        from torch.autograd import Variable
-        expanded_size = (batch_size,) + self.prior_params.size()
-        prior_params = Variable(self.prior_params.expand(expanded_size))
-        return prior_params
-
-    def _log_importance_weight_matrix(self, batch_size, dataset_size):
-        N = dataset_size
-        M = batch_size - 1
-        strat_weight = (N - M) / (N * M)
-        W = torch.Tensor(batch_size, batch_size).fill_(1 / M)
-        W.view(-1)[::M+1] = 1 / N
-        W.view(-1)[1::M+1] = strat_weight
-        W[M-1, 0] = strat_weight
-        return W.log()
-
-def logsumexp(value, dim=None, keepdim=False):
-    """Numerically stable implementation of the operation
-    value.exp().sum(dim, keepdim).log()
-    """
-    from numbers import Number
-    import math
-    if dim is not None:
-        m, _ = torch.max(value, dim=dim, keepdim=True)
-        value0 = value - m
-        if keepdim is False:
-            m = m.squeeze(dim)
-        return m + torch.log(torch.sum(torch.exp(value0),
-                                       dim=dim, keepdim=keepdim))
-    else:
-        m = torch.max(value)
-        sum_exp = torch.sum(torch.exp(value - m))
-        if isinstance(sum_exp, Number):
-            return m + math.log(sum_exp)
-        else:
-            return m + torch.log(sum_exp)
+    def flow_loss(self, nlls):
+        if not nlls: return 0
+        return torch.stack(nlls, dim=0).sum()
 
 def prepare_data(path, subset='/train/', sample=1.0, goals=True, goal_files='goal_files'):
     """ Prepares the train/val scenes and corresponding goals
@@ -480,7 +417,7 @@ def main(epochs=50):
                         help='initial learning rate')
     parser.add_argument('--type', default='vanilla',
                         choices=('vanilla', 'occupancy', 'directional', 'social', 'hiddenstatemlp', 's_att_fast',
-                                 'directionalmlp', 'nn', 'attentionmlp', 'nn_lstm', 'traj_pool', 'nmmp'),
+                                'directionalmlp', 'nn', 'attentionmlp', 'nn_lstm', 'traj_pool', 'nmmp'),
                         help='type of interaction encoder')
     parser.add_argument('--norm_pool', action='store_true',
                         help='normalize the scene along direction of movement')
@@ -516,63 +453,68 @@ def main(epochs=50):
                         help='Value by which the first element of the primary in the latent space is replaced') 
     parser.add_argument('--fast_parallel', action='store_true',
                         help='Use Fast parallel pooling') 
+    parser.add_argument('--nf', action='store_true',
+                        help='Use Normalizing flows')
+
     pretrain = parser.add_argument_group('pretraining')
-    pretrain.add_argument('--load-state', default=None,
-                          help='load a pickled model state dictionary before training')
+    pretrain.add_argument('--load-state', default=None, 
+                        help='load a pickled model state dictionary before training')
     pretrain.add_argument('--load-full-state', default=None,
-                          help='load a pickled full state dictionary before training')
+                        help='load a pickled full state dictionary before training')
     pretrain.add_argument('--nonstrict-load-state', default=None,
-                          help='load a pickled state dictionary before training')
+                        help='load a pickled state dictionary before training')
 
     ##Pretrain Pooling AE
     pretrain.add_argument('--load_pretrained_pool_path', default=None,
-                          help='load a pickled model state dictionary of pool AE before training')
+                        help='load a pickled model state dictionary of pool AE before training')
     pretrain.add_argument('--pretrained_pool_arch', default='onelayer',
-                          help='architecture of pool representation')
+                        help='architecture of pool representation')
     pretrain.add_argument('--downscale', type=int, default=4,
-                          help='downscale factor of pooling grid')
+                        help='downscale factor of pooling grid')
     pretrain.add_argument('--finetune', type=int, default=0,
-                          help='finetune factor of pretrained model')
+                        help='finetune factor of pretrained model')
 
     hyperparameters = parser.add_argument_group('hyperparameters')
     hyperparameters.add_argument('--hidden-dim', type=int, default=128,
-                                 help='LSTM hidden dimension')
+                                help='LSTM hidden dimension')
     hyperparameters.add_argument('--coordinate-embedding-dim', type=int, default=64,
-                                 help='coordinate embedding dimension')
+                                help='coordinate embedding dimension')
     hyperparameters.add_argument('--cell_side', type=float, default=0.6,
-                                 help='cell size of real world')
+                                help='cell size of real world')
     hyperparameters.add_argument('--n', type=int, default=16,
-                                 help='number of cells per side')
+                                help='number of cells per side')
     hyperparameters.add_argument('--layer_dims', type=int, nargs='*', default=[512],
-                                 help='interaction module layer dims (for gridbased pooling)')
+                                help='interaction module layer dims (for gridbased pooling)')
     hyperparameters.add_argument('--pool_dim', type=int, default=256,
-                                 help='output dimension of pooling/interaction vector')
+                                help='output dimension of pooling/interaction vector')
     hyperparameters.add_argument('--embedding_arch', default='two_layer',
-                                 help='interaction encoding arch for gridbased pooling')
+                                help='interaction encoding arch for gridbased pooling')
     hyperparameters.add_argument('--goal_dim', type=int, default=64,
-                                 help='goal dimension')
+                                help='goal dimension')
     hyperparameters.add_argument('--spatial_dim', type=int, default=32,
-                                 help='attentionmlp spatial dimension')
+                                help='attentionmlp spatial dimension')
     hyperparameters.add_argument('--vel_dim', type=int, default=32,
-                                 help='attentionmlp vel dimension')
+                                help='attentionmlp vel dimension')
     hyperparameters.add_argument('--no_vel', action='store_true',
-                                 help='flag to not consider velocity in nn')
+                                help='flag to not consider velocity in nn')
     hyperparameters.add_argument('--pool_constant', default=0, type=int,
-                                 help='background value of gridbased pooling')
+                                help='background value of gridbased pooling')
     hyperparameters.add_argument('--sample', default=1.0, type=float,
-                                 help='sample ratio of train/val scenes')
+                                help='sample ratio of train/val scenes')
     hyperparameters.add_argument('--norm', default=0, type=int,
-                                 help='normalization scheme for grid-based')
+                                help='normalization scheme for grid-based')
     hyperparameters.add_argument('--neigh', default=4, type=int,
-                                 help='number of neighbours to consider in DirectConcat')
+                                help='number of neighbours to consider in DirectConcat')
     hyperparameters.add_argument('--mp_iters', default=5, type=int,
-                                 help='message passing iters in NMMP')
+                                help='message passing iters in NMMP')
     hyperparameters.add_argument('--obs_dropout', action='store_true',
-                                 help='obs length dropout (regularization)')
+                                help='obs length dropout (regularization)')
     hyperparameters.add_argument('--start_length', default=0, type=int,
-                                 help='start length during obs dropout')
-    hyperparameters.add_argument('--alpha_kld', default=1, type=float,
-                                 help='multiplier coefficient for kld loss')                      
+                                help='start length during obs dropout')
+    hyperparameters.add_argument('--beta', default=1, type=float,
+                                help='multiplier coefficient for kld loss') 
+    hyperparameters.add_argument('--gamma', default=1, type=float,
+                                help='multiplier coefficient for flow loss')                     
     args = parser.parse_args()
 
     ## Fixed set of scenes if sampling
@@ -633,18 +575,19 @@ def main(epochs=50):
             pool = NN_Pooling_fast(n=args.neigh, out_dim=args.pool_dim)
         else:
             pool = NN_Pooling(n=args.neigh, out_dim=args.pool_dim, no_vel=args.no_vel)
-  
+
     # create forecasting model
-    model = CFVAE(pool=pool,
-                 embedding_dim=args.coordinate_embedding_dim,
-                 hidden_dim=args.hidden_dim,
-                 goal_flag=args.goals,
-                 goal_dim=args.goal_dim,
-                 num_modes=args.num_modes,
-                 desire_approach=args.desire,
-                 noise_approach=args.noise,
-                 disentangling_value=args.dis_value,
-                 fast_parallel=args.fast_parallel)
+    model = CFVAE(  pool=pool,
+                    embedding_dim=args.coordinate_embedding_dim,
+                    hidden_dim=args.hidden_dim,
+                    goal_flag=args.goals,
+                    goal_dim=args.goal_dim,
+                    num_modes=args.num_modes,
+                    desire_approach=args.desire,
+                    noise_approach=args.noise,
+                    disentangling_value=args.dis_value,
+                    fast_parallel=args.fast_parallel,
+                    flows=args.nf)
 
     # optimizer and schedular
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -679,7 +622,7 @@ def main(epochs=50):
                       criterion=args.loss, multimodal_criterion=args.multi_loss, batch_size=args.batch_size, obs_length=args.obs_length,
                       pred_length=args.pred_length, augment=args.augment, normalize_scene=args.normalize_scene,
                       save_every=args.save_every, start_length=args.start_length, obs_dropout=args.obs_dropout,
-                      alpha_kld=args.alpha_kld, num_modes=args.num_modes, desire_approach=args.desire,
+                      beta=args.beta, gamma=args.gamma, num_modes=args.num_modes, desire_approach=args.desire,
                       fast_parallel=args.fast_parallel)
     trainer.loop(train_scenes, val_scenes, train_goals, val_goals, args.output, epochs=args.epochs, start_epoch=start_epoch)
 

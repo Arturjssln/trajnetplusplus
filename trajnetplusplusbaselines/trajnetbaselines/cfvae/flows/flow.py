@@ -2,6 +2,7 @@
 Code imported from https://github.com/visinf/mar-scf
 """
 from __future__ import print_function
+from collections import OrderedDict
 import math
 import torch
 import torch.nn as nn
@@ -14,16 +15,12 @@ def arcsinh(x):
 
 
 class Split2dMsC(nn.Module):
-	def __init__(self, num_channels, level=0):
+	def __init__(self, level=0):
 		super().__init__()
 		self.level = level
 
 	def split_feature(self, z):
-		return z[:,:z.size(1)//2,:,:], z[:,z.size(1)//2:,:,:]
-
-	def split2d_prior(self, z):
-		h = self.conv(z)
-		return h[:,0::2,:,:], h[:,1::2,:,:]
+		return z[:,:z.size(1)//2], z[:,z.size(1)//2:]
 
 	def forward(self, input, logdet=0., reverse=False, nn_outp=None):
 		if not reverse:
@@ -37,7 +34,6 @@ class Split2dMsC(nn.Module):
 class NLFlowStep(torch.nn.Module):
     def __init__(self):
         super(NLFlowStep, self).__init__()
-        self.coupling = Split2dMsC()
         self.num_params = 5
         self.logA = math.log(8*math.sqrt(3)/9-0.05) # 0.05 is a small number to prevent exactly 0 slope
 
@@ -93,7 +89,7 @@ class NLFlowStep(torch.nn.Module):
 
         x_new = a + b*y + c/denom
 
-        logdet = -torch.log(b - 2*c*d*arg/denom.pow(2)).sum(-1)
+        logdet = -torch.log(b - 2*c*d*arg/denom.pow(2)).sum(0)
 
         y = y.float()
         logdet = logdet.float()
@@ -107,7 +103,7 @@ class NLFlowStep(torch.nn.Module):
         denom = 1 + arg.pow(2)
         x = a + b*y + c/denom
 
-        logdet = -torch.log(b - 2*c*d*arg/denom.pow(2)).sum(-1)
+        logdet = -torch.log(b - 2*c*d*arg/denom.pow(2)).sum(0)
 
         return x, logdet
 
@@ -126,33 +122,31 @@ class FlowNet(nn.Module):
         self.layers = nn.ModuleList()
         self.nb_layers = nb_layers
         self.half_latent_size = latent_size//2
+        #self._store = OrderedDict() TODO: remove
 
         # FlowSteps
         for i in range(self.nb_layers):
             # Split dimension in 2
-            self.layers.append(Split2dMsC(level=i))
+            #self.layers.append(Split2dMsC(level=i))
             self.layers.append(NLFlowStep())
                 
 
     def forward(self, input, logdet=0., reverse=False):
         if not reverse:
-            return self.encode(input)
+            return self.encode(input, logdet=logdet)
         else:
-            return self.decode(input)
+            return self.decode(input, logdet=logdet)
 
-    def encode(self, z, logdet=0.0):
-        for layer in self.layers:
-            z, logdet = layer(z, reverse=False, nn_outp=None) #TODO: determine nn_output
-            if isinstance(layer, Split2dMsC):
-                z1, z2 = z
-                z = z1
+    def encode(self, input, logdet=0.0):
+        z, coefs = input
+        for i, layer in enumerate(self.layers):
+            z, delta_logdet = layer(z, reverse=False, nn_outp=coefs[:, i, :])
+            logdet += delta_logdet
         return z, logdet
 
-    def decode(self, z, eps_std=None):
-        for layer in reversed(self.layers):
-            if isinstance(layer, Split2dMsC):
-                z1 = z
-                z2 = self.c_prior(z1, layer.level, reverse=True)
-                z = (z1, z2)
-            z, logdet = layer(z, logdet=0, reverse=True)
-        return z
+    def decode(self, input, logdet=0.0):
+        z, coefs = input
+        for i, layer in reversed(list(enumerate(self.layers))):
+            z, delta_logdet = layer(z, reverse=True, nn_outp=coefs[:, i, :])
+            logdet += delta_logdet
+        return z, logdet

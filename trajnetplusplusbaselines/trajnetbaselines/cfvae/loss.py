@@ -183,7 +183,6 @@ class VarietyLoss(torch.nn.Module):
         self.pred_length = pred_length
         self.loss_multiplier = loss_multiplier
 
-   
     def forward(self, inputs, targets, batch_split):
         """ Variety loss calculation as proposed in SGAN
 
@@ -223,14 +222,15 @@ class ReconstructionLoss(torch.nn.Module):
         self.loss_multiplier = loss_multiplier
         self.batch_size = batch_size
         self.num_modes = num_modes
-   
+
     def forward(self, inputs, targets, batch_split):
+        # TODO: change description
         """ Variety loss calculation as proposed in SGAN
 
         Parameters
         ----------
         inputs : List of length k
-            Each element of the list is Tensor [pred_length, num_tracks, 5]
+            Each element of the list is : Tensor [pred_length, num_tracks, 5]
             Predicted velocities of pedestrians as multivariate normal
             i.e. positions relative to previous positions
         target : Tensor [pred_length, num_tracks, 2]
@@ -238,9 +238,8 @@ class ReconstructionLoss(torch.nn.Module):
         batch_split : Tensor [batch_size + 1]
             Tensor defining the split of the batch.
             Required to identify the primary tracks of each scene
-        TODO: add following param
 
-        Returns
+        Return
         -------
         loss : Tensor [1,]
             recontruction loss
