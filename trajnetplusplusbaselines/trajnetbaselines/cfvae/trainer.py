@@ -342,7 +342,7 @@ class Trainer(object):
             ## groundtruth of neighbours not provided 
             self.model.eval()
 
-            rel_outputs_test, _, _, _, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
+            rel_outputs_test, _, _, _ = self.model(observed_test, batch_scene_goal, batch_split, n_predict=self.pred_length)
             # Multimodal loss
             loss_test = self.multimodal_criterion(rel_outputs_test, targets, batch_split)
 
