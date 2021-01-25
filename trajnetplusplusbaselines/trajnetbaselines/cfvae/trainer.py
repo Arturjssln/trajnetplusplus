@@ -291,7 +291,7 @@ class Trainer(object):
         kld_loss = self.kld_loss(inputs=z_distr_xy) * self.batch_size
         
         ## Total loss is the sum of the multimodal loss and the kld loss
-        loss = multimodal_loss + self.beta * kld_loss + self.gamma * flow_loss # TODO: flow loss here ??????
+        loss = multimodal_loss + self.beta * kld_loss + self.gamma * flow_loss
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
@@ -455,6 +455,8 @@ def main(epochs=50):
                         help='Use Fast parallel pooling') 
     parser.add_argument('--nf', action='store_true',
                         help='Use Normalizing flows')
+    parser.add_argument('--layers', default=10, type=int,
+                        help='Number of layers for normalizing flows (only useful when --nf is present)')
 
     pretrain = parser.add_argument_group('pretraining')
     pretrain.add_argument('--load-state', default=None, 
@@ -464,41 +466,15 @@ def main(epochs=50):
     pretrain.add_argument('--nonstrict-load-state', default=None,
                         help='load a pickled state dictionary before training')
 
-    ##Pretrain Pooling AE
-    pretrain.add_argument('--load_pretrained_pool_path', default=None,
-                        help='load a pickled model state dictionary of pool AE before training')
-    pretrain.add_argument('--pretrained_pool_arch', default='onelayer',
-                        help='architecture of pool representation')
-    pretrain.add_argument('--downscale', type=int, default=4,
-                        help='downscale factor of pooling grid')
-    pretrain.add_argument('--finetune', type=int, default=0,
-                        help='finetune factor of pretrained model')
-
     hyperparameters = parser.add_argument_group('hyperparameters')
     hyperparameters.add_argument('--hidden-dim', type=int, default=128,
                                 help='LSTM hidden dimension')
-    hyperparameters.add_argument('--coordinate-embedding-dim', type=int, default=64,
-                                help='coordinate embedding dimension')
-    hyperparameters.add_argument('--cell_side', type=float, default=0.6,
-                                help='cell size of real world')
-    hyperparameters.add_argument('--n', type=int, default=16,
-                                help='number of cells per side')
-    hyperparameters.add_argument('--layer_dims', type=int, nargs='*', default=[512],
-                                help='interaction module layer dims (for gridbased pooling)')
     hyperparameters.add_argument('--pool_dim', type=int, default=256,
                                 help='output dimension of pooling/interaction vector')
-    hyperparameters.add_argument('--embedding_arch', default='two_layer',
-                                help='interaction encoding arch for gridbased pooling')
     hyperparameters.add_argument('--goal_dim', type=int, default=64,
                                 help='goal dimension')
-    hyperparameters.add_argument('--spatial_dim', type=int, default=32,
-                                help='attentionmlp spatial dimension')
-    hyperparameters.add_argument('--vel_dim', type=int, default=32,
-                                help='attentionmlp vel dimension')
     hyperparameters.add_argument('--no_vel', action='store_true',
                                 help='flag to not consider velocity in nn')
-    hyperparameters.add_argument('--pool_constant', default=0, type=int,
-                                help='background value of gridbased pooling')
     hyperparameters.add_argument('--sample', default=1.0, type=float,
                                 help='sample ratio of train/val scenes')
     hyperparameters.add_argument('--norm', default=0, type=int,
@@ -587,7 +563,8 @@ def main(epochs=50):
                     noise_approach=args.noise,
                     disentangling_value=args.dis_value,
                     fast_parallel=args.fast_parallel,
-                    flows=args.nf)
+                    flows=args.nf,
+                    nb_layers=args.layers)
 
     # optimizer and schedular
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)

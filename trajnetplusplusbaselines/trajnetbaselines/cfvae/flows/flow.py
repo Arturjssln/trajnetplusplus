@@ -32,6 +32,10 @@ class Split2dMsC(nn.Module):
 			return z, logdet					
 
 class NLFlowStep(torch.nn.Module):
+    """ 
+    Sub-network of the Normalizing flow network
+
+    """
     def __init__(self):
         super(NLFlowStep, self).__init__()
         self.num_params = 5
@@ -117,21 +121,45 @@ class NLFlowStep(torch.nn.Module):
 
 
 class FlowNet(nn.Module):
+    """ 
+    Normalizing flow network
+    """
     def __init__(self, nb_layers, latent_size):
         super(FlowNet, self).__init__()
         self.layers = nn.ModuleList()
         self.nb_layers = nb_layers
         self.half_latent_size = latent_size//2
-        #self._store = OrderedDict() TODO: remove
 
         # FlowSteps
         for i in range(self.nb_layers):
-            # Split dimension in 2
-            #self.layers.append(Split2dMsC(level=i))
             self.layers.append(NLFlowStep())
                 
 
     def forward(self, input, logdet=0., reverse=False):
+        """
+        Parameters
+        ----------
+        input : Tuple(Tensor [batch_size, latent_size], Tensor [batch_size, nb_layers, 5])
+            First value of the tuple: 
+                Input value of the normalizing flow, sampled value from the latent space
+                If reverse is True, it should the inputs to normalize
+                If reverse is Flase, it should the normalized inputs from which samples will be generated
+            Second value of the tuple: 
+                Coefficients of the Normalizing flow network
+        logdet : Double
+            Will contain the logarithm of the determinant (used for loss)
+            Default: 0.
+        reverse : Boolean
+            Define if the Normalizing flow should be used in normal or reverse mode
+            Default: False
+
+        Return
+        -------
+        loss : Tuple(Tensor [batch_size, latent_size], Double)
+            Return a tuple of the output value and the logarithm of the determinant of jacobians
+            If reverse is True, it will return the normalized values (as first element)
+            If reverse is Flase, it will return the generated values (as first element)
+        """
         if not reverse:
             return self.encode(input, logdet=logdet)
         else:

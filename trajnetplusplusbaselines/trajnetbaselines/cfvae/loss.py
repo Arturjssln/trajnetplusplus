@@ -10,9 +10,9 @@ class KLDLoss(torch.nn.Module):
     def __init__(self):
         super(KLDLoss, self).__init__()
 
-    def forward(self, inputs, targets = None):
+    def forward(self, inputs, targets=None):
         """
-        Forward path
+        Forward path of Kullback-Leibler divergence Loss
 
         Parameters:
         -----------
@@ -29,7 +29,7 @@ class KLDLoss(torch.nn.Module):
         """
 
         if targets is None:
-            # Default KLD Loss (with standard normal distribution)
+            # Default KLD Loss (with standard normal distribution, simplified equation)
             z_mu, z_log_var = torch.split(inputs, split_size_or_sections=inputs.size(1)//2, dim=1)
             latent_loss = -0.5 * torch.sum(1.0 + z_log_var - torch.square(z_mu) - torch.exp(z_log_var), dim=1)
         else:
@@ -224,8 +224,7 @@ class ReconstructionLoss(torch.nn.Module):
         self.num_modes = num_modes
 
     def forward(self, inputs, targets, batch_split):
-        # TODO: change description
-        """ Variety loss calculation as proposed in SGAN
+        """ Reconstruction loss
 
         Parameters
         ----------

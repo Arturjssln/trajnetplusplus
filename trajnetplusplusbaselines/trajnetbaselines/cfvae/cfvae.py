@@ -21,7 +21,7 @@ class CFVAE(torch.nn.Module):
         latent_dim=128, pool=None, pool_to_input=True, \
         goal_dim=None, goal_flag=False, num_modes=1, \
         desire_approach=False, noise_approach='default',\
-        disentangling_value=None, fast_parallel=False, flows=True):
+        fast_parallel=False, flows=True, nb_layers=10):
         """ Initialize the CFVAE forecasting model
 
         Attributes
@@ -36,6 +36,18 @@ class CFVAE(torch.nn.Module):
             Embedding dimension of the unit vector pointing towards the goal
         goal_flag: Bool
             if True, the embedded goal vector is concatenated to the input embedding of LSTM 
+        num_modes: Int
+            TODO
+        desire_approach: Bool
+            TODO
+        noise_approach: String
+            TODO
+        fast_parallel: Bool
+            TODO
+        flows: Bool
+            TODO
+        nb_layers: Int
+            TODO
         """
         super(CFVAE, self).__init__()
 
@@ -71,19 +83,18 @@ class CFVAE(torch.nn.Module):
 
         ## cVAE
         self.vae_encoder_xy = VAEEncoder(2*self.hidden_dim, 2*self.latent_dim)
-        #self.vae_encoder_x = VAEEncoder(self.hidden_dim, 2*self.latent_dim)
-        self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
+        if self.hidden_dim != self.latent_dim:
+            self.vae_decoder = VAEDecoder(self.latent_dim, self.hidden_dim)
+
+        # Noise layer (used in concatenation noise approach)
+        self.noise_linear = torch.nn.Linear(2*self.hidden_dim, self.hidden_dim)
 
         # Non-Linear Squared Flow
         self.flows = flows
         self.coupling = Split2dMsC()
-        self.nb_layers = 10 # TODO: include this as parameter
+        self.nb_layers = nb_layers
         self.input_to_flow = nn.Linear(self.hidden_dim+self.latent_dim//2, self.nb_layers * 5) # 5 = number of parameters of the Non-Linear Squared Flow
         self.flow_net = FlowNet(nb_layers=self.nb_layers, latent_size=self.latent_dim)
-
-        # Noise layer (used in concatenation noise approach)
-        self.noise_linear = torch.nn.Linear(2*self.hidden_dim, self.hidden_dim)
-        self.disentangling_value = disentangling_value
 
         ## LSTM decoder
         self.decoder = torch.nn.LSTMCell(self.embedding_dim + goal_rep_dim + pooling_dim, self.hidden_dim)
@@ -252,7 +263,6 @@ class CFVAE(torch.nn.Module):
             # LSTM Step
             hidden_cell_state_obs, normal = self.step(self.obs_encoder, hidden_cell_state_obs, obs1, obs2, goals, batch_split)
             # concat predictions
-            
             for mode_n, mode_p in zip(normals.keys(), positions.keys()):
                 normals[mode_n].append(normal)
                 positions[mode_p].append(obs2 + normal[:, :2]) # no sampling, just mean
@@ -277,26 +287,14 @@ class CFVAE(torch.nn.Module):
             z_mu, z_var_log = self.vae_encoder_xy(hidden_state)
             z_distr_xy = torch.cat((z_mu, z_var_log), dim=1)
 
-        # Compute target latent distribution (depending only on observation)
-        # z_distr_x = None
-        # z_mu_obs = torch.zeros(self.num_tracks, self.latent_dim)
-        # z_var_log_obs = torch.ones(self.num_tracks, self.latent_dim)
-        # if self.trajectron:
-        #     z_mu_obs, z_var_log_obs = self.vae_encoder_x(hidden_cell_state_obs[0])
-        #     z_distr_x = torch.cat((z_mu_obs, z_var_log_obs), dim=1)
-
-        # Used for final loss
         nlls = []
-
         # Make k predictions
         for k in range(self.num_modes):
             hidden_cell_state, z_val = self.add_noise(z_mu, z_var_log, hidden_cell_state_obs, batch_split)
 
             # Pass though conditional nonlinear normalizing flows
-            #z_before = z_val.clone()
             if self.flows:
                 z_val, logdet = self.nonlinear_normalizing_flow(z_val, torch.stack(hidden_cell_state_obs[0]).detach())
-                #print("Total diff: ", torch.sum(z_val - z_before).item())
                 # Keep track of nlls for final loss
                 nlls.append(-logdet)
 
@@ -322,7 +320,6 @@ class CFVAE(torch.nn.Module):
         #    Absolute positions of all pedestrians
         # Rel_pred_scene: Tensor [seq_length, num_tracks, 5]
         #    Velocities of all pedestrians
-
         rel_pred_scene = [torch.stack(normals[mode_n], dim=0) for mode_n in normals.keys()]
         pred_scene = [torch.stack(positions[mode_p], dim=0) for mode_p in positions.keys()]
 
@@ -350,15 +347,18 @@ class CFVAE(torch.nn.Module):
             z_val = sample_multivariate_distribution(torch.zeros(self.num_tracks, self.latent_dim), torch.ones(self.num_tracks, self.latent_dim))
 
         ## VAE decoder
-        x_reconstr = self.vae_decoder(z_val) 
+        if self.hidden_dim != self.latent_dim:
+            z_recon = self.vae_decoder(z_val)
+        else:
+            z_recon = z_val.clone()
 
         # Add noise in the model depending of the approach
         if ((self.noise_approach == 'product') or (self.noise_approach == 'default' and self.desire)):
-            hidden_cell = [hidden_cell_state_obs[0][i] * x_reconstr[i] for i in range(self.num_tracks)]
+            hidden_cell = [hidden_cell_state_obs[0][i] * z_recon[i] for i in range(self.num_tracks)]
         elif ((self.noise_approach == 'concat') or (self.noise_approach == 'default' and self.trajectron)):
-            hidden_cell = [self.noise_linear(torch.cat([hidden_cell_state_obs[0][i], x_reconstr[i]])) for i in range(self.num_tracks)]
+            hidden_cell = [self.noise_linear(torch.cat([hidden_cell_state_obs[0][i], z_recon[i]])) for i in range(self.num_tracks)]
         elif self.noise_approach == 'additive':
-            hidden_cell = [hidden_cell_state_obs[0][i] + x_reconstr[i] for i in range(self.num_tracks)]
+            hidden_cell = [hidden_cell_state_obs[0][i] + z_recon[i] for i in range(self.num_tracks)]
         else:
             raise NameError
         return (hidden_cell, hidden_cell_state_obs[1]), z_val
@@ -417,8 +417,8 @@ class VAEPredictor(object):
             if args.normalize_scene:
                 xy, rotation, center, scene_goal = center_scene(xy, obs_length, goals=scene_goal)
             
-            xy = torch.Tensor(xy)  #.to(self.device)
-            scene_goal = torch.Tensor(scene_goal) #.to(device)
+            xy = torch.Tensor(xy) 
+            scene_goal = torch.Tensor(scene_goal) 
             batch_split = torch.Tensor(batch_split).long()
 
             # _, output_scenes = self.model(xy[start_length:obs_length], scene_goal, batch_split, xy[obs_length:-1].clone())
@@ -442,8 +442,8 @@ class VAEPredictor(object):
         return multimodal_outputs
 
 class VAEEncoder(torch.nn.Module):
-    """Project x distribution on latent space TODO : change description
-
+    """
+    Encoder going from hidden space to latent space distribution
     """
     def __init__(self, input_dim, output_dim):
         super(VAEEncoder, self).__init__()
@@ -454,6 +454,16 @@ class VAEEncoder(torch.nn.Module):
         self.relu = torch.nn.ReLU()
 
     def forward(self, inputs):
+        """
+        Params:
+        -------
+        inputs: List of size num_tracks of Tensor [batch_size, input_dim]
+
+        Return:
+        -------
+        out: Tuple(Tensor [latent_dim], Tensor [latent_dim])
+            output represents maen and logarithm of the variance of the distribution
+        """
         inputs = torch.stack(inputs)
         inputs = torch.reshape(inputs, shape=(-1, self.input_dim))
         z_mu = self.relu(self.fc_mu(inputs))
@@ -461,8 +471,9 @@ class VAEEncoder(torch.nn.Module):
         return z_mu, z_log_var
 
 class VAEDecoder(torch.nn.Module):
-    """Project x distribution on latent space TODO : change description
-
+    """
+    Decoder going from latent space to hidden space 
+    (Decoder is not needed when latent and hidden space are of same size)
     """
     def __init__(self, input_dim, output_dim):
         super(VAEDecoder, self).__init__()
@@ -472,5 +483,14 @@ class VAEDecoder(torch.nn.Module):
         self.relu = torch.nn.ReLU()
 
     def forward(self, inputs):
+        """
+        Params:
+        -------
+        inputs: Tensor [batch_size, input_dim]
+
+        Return:
+        -------
+        out: Tensor [batch_size, output_dim]
+        """
         inputs = torch.reshape(inputs, shape=(-1, self.input_dim))
         return self.relu(self.fc(inputs))
