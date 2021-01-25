@@ -198,7 +198,6 @@ class VarietyLoss(torch.nn.Module):
         batch_split : Tensor [batch_size + 1]
             Tensor defining the split of the batch.
             Required to identify the primary tracks of each scene
-        TODO: add following param
         Returns
         -------
         loss : Tensor [1,]
@@ -225,7 +224,7 @@ class ReconstructionLoss(torch.nn.Module):
         self.num_modes = num_modes
    
     def forward(self, inputs, targets, batch_split):
-        """ Variety loss calculation as proposed in SGAN
+        """ Reconsstruction loss calculation
 
         Parameters
         ----------
@@ -238,12 +237,11 @@ class ReconstructionLoss(torch.nn.Module):
         batch_split : Tensor [batch_size + 1]
             Tensor defining the split of the batch.
             Required to identify the primary tracks of each scene
-        TODO: add following param
 
         Returns
         -------
         loss : Tensor [1,]
-            recontruction loss
+            recontruction loss as sum of losses for every element in the list inputs 
         """
 
         loss = 0
