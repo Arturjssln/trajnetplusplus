@@ -4,4 +4,5 @@ from . import augmentation
 from . import lstm
 from . import sgan
 from . import vae
+from . import cfvae
 # from . import classical
