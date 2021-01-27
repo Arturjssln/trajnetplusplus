@@ -155,7 +155,7 @@ class FlowNet(nn.Module):
 
         Return
         -------
-        loss : Tuple(Tensor [batch_size, latent_size], Double)
+        loss : Tuple(Tensor [batch_size, latent_size], Tensor [batch_size, 1])
             Return a tuple of the output value and the logarithm of the determinant of jacobians
             If reverse is True, it will return the normalized values (as first element)
             If reverse is Flase, it will return the generated values (as first element)

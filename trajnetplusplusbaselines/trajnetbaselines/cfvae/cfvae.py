@@ -373,7 +373,11 @@ class CFVAE(torch.nn.Module):
 
         # Non Linear Normalizing Flow (encoding + decoding)
         zL = zL.transpose(0, 1)
-        epsilon, logdet_enc = self.flow_net(input=(zL, flow_coefs), reverse=True)
+        if self.training:
+            epsilon, logdet_enc = self.flow_net(input=(zL, flow_coefs), reverse=True)
+        else:
+            epsilon = torch.Tensor(size=zL.size()).normal_(0, 1)
+            logdet_enc = 0
         zL, logdet_dec = self.flow_net(input=(epsilon, flow_coefs))
         logdet = logdet_enc + logdet_dec
         zL = zL.transpose(0, 1)
