@@ -449,8 +449,6 @@ def main(epochs=50):
                         help='Use Desire approach (Trajectron by default)') 
     parser.add_argument('--noise', default='default', choices=('default', 'product', 'concat', 'additive'),
                         help='Inclusion of noise approach (Default for DESIRE: h*z, for Trajectron: [h,z])') 
-    parser.add_argument('--dis_value', default=None, type=float,
-                        help='Value by which the first element of the primary in the latent space is replaced') 
     parser.add_argument('--fast_parallel', action='store_true',
                         help='Use Fast parallel pooling') 
     parser.add_argument('--nf', action='store_true',
@@ -469,6 +467,8 @@ def main(epochs=50):
     hyperparameters = parser.add_argument_group('hyperparameters')
     hyperparameters.add_argument('--hidden-dim', type=int, default=128,
                                 help='LSTM hidden dimension')
+    hyperparameters.add_argument('--coordinate-embedding-dim', type=int, default=64,
+                                help='coordinate embedding dimension')
     hyperparameters.add_argument('--pool_dim', type=int, default=256,
                                 help='output dimension of pooling/interaction vector')
     hyperparameters.add_argument('--goal_dim', type=int, default=64,
@@ -561,7 +561,6 @@ def main(epochs=50):
                     num_modes=args.num_modes,
                     desire_approach=args.desire,
                     noise_approach=args.noise,
-                    disentangling_value=args.dis_value,
                     fast_parallel=args.fast_parallel,
                     flows=args.nf,
                     nb_layers=args.layers)
